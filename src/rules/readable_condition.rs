@@ -36,7 +36,12 @@ impl LintRule for ReadableCondition {
     fn get_message(&self, ast: &parser::AST) -> LintMessage {
         let cond_pos = match &ast.body {
             ASTBody::List(forms) => {
-                forms[1].pos
+                match &forms[1].body {
+                    ASTBody::List(cond_forms) => {
+                        cond_forms[0].pos
+                    },
+                    _ => unreachable!()
+                }
             },
             _ => unreachable!()
         };

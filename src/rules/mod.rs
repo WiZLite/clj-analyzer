@@ -7,25 +7,28 @@ use edn_rs;
 pub enum LintLevel {
     Info,
     Warning,
-    Error
+    Error,
 }
 
 #[derive(Clone, Copy)]
-pub struct  Location {
+pub struct Location {
     pub line: u32,
     pub column: u32,
 }
 
 impl<'a> From<parser::Span<'a>> for Location {
     fn from(span: parser::Span<'a>) -> Self {
-        Location { line: span.location_line(), column: span.get_column() as u32 }
+        Location {
+            line: span.location_line(),
+            column: (span.get_column() - 1) as u32, // Convert index to starting from 0
+        }
     }
 }
 
 pub struct LintMessage {
     pub level: LintLevel,
     pub message: String,
-    pub location: Location
+    pub location: Location,
 }
 
 impl Display for LintLevel {
@@ -33,7 +36,7 @@ impl Display for LintLevel {
         match self {
             LintLevel::Info => write!(f, "info"),
             LintLevel::Warning => write!(f, "warning"),
-            LintLevel::Error => write!(f, "error")
+            LintLevel::Error => write!(f, "error"),
         }
     }
 }
