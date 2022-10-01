@@ -1,6 +1,6 @@
 use crate::parser::{self, ASTBody};
 
-use super::{LintRule, LintLevel};
+use super::{LintRule, LintLevel, LintMessage, Location};
 
 pub(super) struct ReadableCondition {}
 impl LintRule for ReadableCondition {
@@ -33,7 +33,17 @@ impl LintRule for ReadableCondition {
         false
     }
 
-    fn get_message(&self, ast: &parser::AST) -> (LintLevel, String) {
-        (LintLevel::Warning, "if-not with condition using and/or is hard to read".to_string())
+    fn get_message(&self, ast: &parser::AST) -> LintMessage {
+        let cond_pos = match &ast.body {
+            ASTBody::List(forms) => {
+                forms[1].pos
+            },
+            _ => unreachable!()
+        };
+        LintMessage {
+            level: LintLevel::Warning,
+            message: "if-not with condition using and/or is hard to read".to_string(),
+            location: cond_pos.into()
+        }
     }
 }

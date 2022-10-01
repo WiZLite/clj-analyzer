@@ -35,14 +35,14 @@ fn main() {
                 analyzer::visit_ast(&ast, &|ast| {
                     for rule in &rules {
                         if rule.predicate(ast) {
-                            let (level, message) = rule.get_message(ast);
+                            let message = rule.get_message(ast);
                             println!(
                                 "{}:{}:{}: {}: {}",
                                 path.display(),
-                                ast.line(),
-                                ast.column(),
-                                level,
-                                message
+                                message.location.line,
+                                message.location.column,
+                                message.level,
+                                message.message,
                             )
                         }
                     }

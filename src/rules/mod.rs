@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::parser::{self, ASTBody};
+use crate::parser::{self, ASTBody, Span};
 mod readable_condition;
 use edn_rs;
 
@@ -8,6 +8,24 @@ pub enum LintLevel {
     Info,
     Warning,
     Error
+}
+
+#[derive(Clone, Copy)]
+pub struct  Location {
+    pub line: u32,
+    pub column: u32,
+}
+
+impl<'a> From<parser::Span<'a>> for Location {
+    fn from(span: parser::Span<'a>) -> Self {
+        Location { line: span.location_line(), column: span.get_column() as u32 }
+    }
+}
+
+pub struct LintMessage {
+    pub level: LintLevel,
+    pub message: String,
+    pub location: Location
 }
 
 impl Display for LintLevel {
@@ -24,7 +42,7 @@ pub trait LintRule {
     fn rule_name() -> String;
     fn new(config: edn_rs::Edn) -> Box<Self>;
     fn predicate(&self, ast: &parser::AST) -> bool;
-    fn get_message(&self, ast: &parser::AST) -> (LintLevel, String);
+    fn get_message(&self, ast: &parser::AST) -> LintMessage;
 }
 
 pub fn get_rules(config: edn_rs::Edn) -> Vec<Box<impl LintRule>> {
