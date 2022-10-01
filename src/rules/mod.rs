@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use crate::parser::{self, ASTBody};
+mod readable_condition;
 use edn_rs;
 
 pub enum LintLevel {
@@ -27,5 +28,5 @@ pub trait LintRule {
 }
 
 pub fn get_rules(config: edn_rs::Edn) -> Vec<Box<impl LintRule>> {
-    vec![]
+    vec![readable_condition::ReadableCondition::new(config)]
 }
