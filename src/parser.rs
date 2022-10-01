@@ -37,6 +37,9 @@ pub enum ASTBody<'a> {
     Set(Vec<AST<'a>>),
     Map(Vec<(AST<'a>, AST<'a>)>),
     AnonymousFn(Vec<AST<'a>>),
+    Quote(Box<AST<'a>>),
+    SyntaxQuote(Box<AST<'a>>),
+    UnQuote(Box<AST<'a>>),
 }
 
 fn parse_number(s: Span) -> IResult<Span, AST> {
@@ -289,6 +292,45 @@ fn parse_map(s: Span) -> IResult<Span, AST> {
     ))
 }
 
+fn parse_quote(s: Span) -> IResult<Span, AST> {
+    let (s, pos) = position(s)?;
+    let (s, _) = char('\'')(s)?;
+    let (s, form) = parse_form(s)?;
+    Ok((
+        s,
+        AST {
+            pos,
+            body: ASTBody::Quote(Box::new(form)),
+        },
+    ))
+}
+
+fn parse_unquote(s: Span) -> IResult<Span, AST> {
+    let (s, pos) = position(s)?;
+    let (s, _) = char('~')(s)?;
+    let (s, form) = parse_form(s)?;
+    Ok((
+        s,
+        AST {
+            pos,
+            body: ASTBody::UnQuote(Box::new(form)),
+        },
+    ))
+}
+
+fn parse_syntax_quote(s: Span) -> IResult<Span, AST> {
+    let (s, pos) = position(s)?;
+    let (s, _) = char('`')(s)?;
+    let (s, form) = parse_form(s)?;
+    Ok((
+        s,
+        AST {
+            pos,
+            body: ASTBody::SyntaxQuote(Box::new(form)),
+        },
+    ))
+}
+
 fn parse_form(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     alt((
@@ -301,6 +343,9 @@ fn parse_form(s: Span) -> IResult<Span, AST> {
         parse_set,
         parse_anonymous_fn,
         parse_map,
+        parse_quote,
+        parse_unquote,
+        parse_syntax_quote,
     ))(s)
 }
 
@@ -447,15 +492,24 @@ mod tests {
                 ASTBody::AnonymousFn(vec![
                     AST {
                         pos: Span::new_from_raw_offset(2, 1, "", ()),
-                        body: ASTBody::Symbol { ns: None, name: "+" }
+                        body: ASTBody::Symbol {
+                            ns: None,
+                            name: "+"
+                        }
                     },
                     AST {
                         pos: Span::new_from_raw_offset(4, 1, "", ()),
-                        body: ASTBody::Symbol { ns: None, name: "a" }
+                        body: ASTBody::Symbol {
+                            ns: None,
+                            name: "a"
+                        }
                     },
                     AST {
                         pos: Span::new_from_raw_offset(6, 1, "", ()),
-                        body: ASTBody::Symbol { ns: None, name: "b" }
+                        body: ASTBody::Symbol {
+                            ns: None,
+                            name: "b"
+                        }
                     }
                 ])
             );
@@ -496,5 +550,44 @@ mod tests {
                 ])
             );
         }
+    }
+    #[test]
+    fn parse_quote_test() {
+        let result = parse_quote("'(+ a 1)".into()).unwrap();
+        assert!(match result.1.body {
+            ASTBody::Quote(quoted_form) => {
+                match quoted_form.body {
+                    ASTBody::List(_) => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
+    }
+    #[test]
+    fn parse_unquote_test() {
+        let result = parse_unquote("~value".into()).unwrap();
+        assert!(match result.1.body {
+            ASTBody::UnQuote(quoted_form) => {
+                match quoted_form.body {
+                    ASTBody::Symbol { ns, name } => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
+    }
+    #[test]
+    fn parse_syntax_quote_test() {
+        let result = parse_syntax_quote("`(+ a 1)".into()).unwrap();
+        assert!(match result.1.body {
+            ASTBody::SyntaxQuote(quoted_form) => {
+                match quoted_form.body {
+                    ASTBody::List(_) => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        })
     }
 }
