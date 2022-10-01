@@ -6,7 +6,7 @@ use nom::{
     },
     combinator::{map_res, not, opt},
     error::ParseError,
-    multi::{self, count, many0, separated_list0},
+    multi::{self, count, many0, many1, separated_list0},
     sequence::delimited,
     AsChar, IResult, InputTakeAtPosition,
 };
@@ -36,6 +36,7 @@ pub enum ASTBody<'a> {
     Vector(Vec<AST<'a>>),
     Set(Vec<AST<'a>>),
     Map(Vec<(AST<'a>, AST<'a>)>),
+    AnonymousFn(Vec<AST<'a>>),
 }
 
 fn parse_number(s: Span) -> IResult<Span, AST> {
@@ -80,13 +81,8 @@ struct StringLiteralNode<'a> {
     pub text: &'a str,
 }
 
-fn separator0(s: Span) -> IResult<Span, ()> {
-    let (s, _) = delimited(multispace0, opt(char(',')), multispace0)(s)?;
-    Ok((s, ()))
-}
-
-fn sep_by_comma(s: Span) -> IResult<Span, ()> {
-    let (s, _) = delimited(multispace0, char(','), multispace0)(s)?;
+fn comma(s: Span) -> IResult<Span, ()> {
+    let (s, _) = char(',')(s)?;
     Ok((s, ()))
 }
 
@@ -95,8 +91,13 @@ fn multispace(s: Span) -> IResult<Span, ()> {
     Ok((s, ()))
 }
 
+fn separator0(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many0(alt((comma, multispace)))(s)?;
+    Ok((s, ()))
+}
+
 fn separator1(s: Span) -> IResult<Span, ()> {
-    let (s, _) = alt((sep_by_comma, multispace))(s)?;
+    let (s, _) = many1(alt((comma, multispace)))(s)?;
     Ok((s, ()))
 }
 
@@ -205,9 +206,9 @@ fn parse_forms(s: Span) -> IResult<Span, Vec<AST>> {
 fn parse_list(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     let (s, forms) = delimited(
-        permutation((char('('), multispace0)),
+        permutation((char('('), separator0)),
         parse_forms,
-        permutation((char(')'), multispace0)),
+        permutation((char(')'), separator0)),
     )(s)?;
     Ok((
         s,
@@ -221,9 +222,9 @@ fn parse_list(s: Span) -> IResult<Span, AST> {
 fn parse_vector(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     let (s, forms) = delimited(
-        permutation((char('['), multispace0)),
+        permutation((char('['), separator0)),
         parse_forms,
-        permutation((char(']'), multispace0)),
+        permutation((char(']'), separator0)),
     )(s)?;
     Ok((
         s,
@@ -238,15 +239,32 @@ fn parse_set(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     let (s, _) = char('#')(s)?;
     let (s, forms) = delimited(
-        permutation((char('{'), multispace0)),
+        permutation((char('{'), separator0)),
         parse_forms,
-        permutation((char('}'), multispace0)),
+        permutation((char('}'), separator0)),
     )(s)?;
     Ok((
         s,
         AST {
             pos,
             body: ASTBody::Set(forms),
+        },
+    ))
+}
+
+fn parse_anonymous_fn(s: Span) -> IResult<Span, AST> {
+    let (s, pos) = position(s)?;
+    let (s, _) = char('#')(s)?;
+    let (s, forms) = delimited(
+        permutation((char('('), separator0)),
+        parse_forms,
+        permutation((char(')'), separator0)),
+    )(s)?;
+    Ok((
+        s,
+        AST {
+            pos,
+            body: ASTBody::AnonymousFn(forms),
         },
     ))
 }
@@ -258,9 +276,9 @@ fn parse_map(s: Span) -> IResult<Span, AST> {
     }
     let (s, pos) = position(s)?;
     let (s, kvs) = delimited(
-        permutation((char('{'), multispace0)),
+        permutation((char('{'), separator0)),
         separated_list0(separator1, parse_kv),
-        permutation((char('}'), multispace0)),
+        permutation((char('}'), separator0)),
     )(s)?;
     Ok((
         s,
@@ -274,13 +292,15 @@ fn parse_map(s: Span) -> IResult<Span, AST> {
 fn parse_form(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     alt((
+        parse_list,
+        parse_symbol,
         parse_keyword,
         parse_number,
         parse_string,
         parse_vector,
-        parse_map,
-        parse_list,
         parse_set,
+        parse_anonymous_fn,
+        parse_map,
     ))(s)
 }
 
@@ -369,7 +389,6 @@ mod tests {
                     }
                 }
             );
-
             assert_eq!(
                 parse_symbol("ns/name".into()).unwrap().1.body,
                 ASTBody::Symbol {
@@ -383,7 +402,7 @@ mod tests {
     fn test_parse_forms() {
         unsafe {
             assert_eq!(
-                parse_vector("[ 1 ]".into()).unwrap().1.body,
+                parse_vector("[ 1 ,,]".into()).unwrap().1.body,
                 ASTBody::Vector(vec![AST {
                     pos: Span::new_from_raw_offset(2, 1, "", ()),
                     body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
@@ -420,6 +439,23 @@ mod tests {
                     AST {
                         pos: Span::new_from_raw_offset(9, 2, "", ()),
                         body: ASTBody::StringLiteral("hello")
+                    }
+                ])
+            );
+            assert_eq!(
+                parse_anonymous_fn("#(+ a b)".into()).unwrap().1.body,
+                ASTBody::AnonymousFn(vec![
+                    AST {
+                        pos: Span::new_from_raw_offset(2, 1, "", ()),
+                        body: ASTBody::Symbol { ns: None, name: "+" }
+                    },
+                    AST {
+                        pos: Span::new_from_raw_offset(4, 1, "", ()),
+                        body: ASTBody::Symbol { ns: None, name: "a" }
+                    },
+                    AST {
+                        pos: Span::new_from_raw_offset(6, 1, "", ()),
+                        body: ASTBody::Symbol { ns: None, name: "b" }
                     }
                 ])
             );
