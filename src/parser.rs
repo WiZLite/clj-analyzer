@@ -1,3 +1,5 @@
+use std::{array::IntoIter, path::Iter};
+
 use nom::{
     branch::{alt, permutation},
     bytes::complete::{tag, take_till, take_till1, take_until},
@@ -27,13 +29,13 @@ pub struct AST<'a> {
 }
 
 impl<'a> AST<'a> {
-    fn fragment(&self) -> &'a str {
+    pub fn fragment(&self) -> &'a str {
         self.pos.fragment()
     }
-    fn column(&self) -> usize {
+    pub fn column(&self) -> usize {
         self.pos.get_column()
     }
-    fn line(&self) -> u32 {
+    pub fn line(&self) -> u32 {
         self.pos.location_line()
     }
 }
@@ -226,7 +228,7 @@ fn parse_string(input: Span) -> IResult<Span, AST> {
     ))
 }
 
-fn parse_forms(s: Span) -> IResult<Span, Vec<AST>> {
+pub fn parse_forms(s: Span) -> IResult<Span, Vec<AST>> {
     let (s, forms) = separated_list0(separator1, parse_form)(s)?;
     Ok((s, forms))
 }

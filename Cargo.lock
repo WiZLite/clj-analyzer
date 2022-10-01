@@ -67,6 +67,7 @@ name = "clj-analyzer"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "edn-rs",
  "nom",
  "nom_locate",
  "pretty_assertions",
@@ -87,6 +88,12 @@ name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
+name = "edn-rs"
+version = "0.17.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d2e6082a0fb551533530ad464d65c0477735b15cd2e049e2c833e28d4df1a0c"
 
 [[package]]
 name = "heck"
