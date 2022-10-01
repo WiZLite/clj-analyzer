@@ -8,7 +8,7 @@ use nom::{
     error::ParseError,
     multi::{self, count, many0, many1, separated_list0},
     sequence::delimited,
-    AsChar, IResult, InputTakeAtPosition,
+    AsChar, IResult, InputTakeAtPosition, Offset,
 };
 use nom_locate::{position, LocatedSpan};
 
@@ -24,6 +24,18 @@ pub enum NumberLiteralValue {
 pub struct AST<'a> {
     pub pos: Span<'a>,
     pub body: ASTBody<'a>,
+}
+
+impl<'a> AST<'a> {
+    fn fragment(&self) -> &'a str {
+        self.pos.fragment()
+    }
+    fn column(&self) -> usize {
+        self.pos.get_column()
+    }
+    fn line(&self) -> u32 {
+        self.pos.location_line()
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -42,8 +54,15 @@ pub enum ASTBody<'a> {
     UnQuote(Box<AST<'a>>),
 }
 
-fn parse_number(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn get_span<'a>(input: &'a str, from: Span, to: Span) -> Span<'a> {
+    let from_offset = from.location_offset();
+    let to_offset = to.location_offset();
+    let fragment = &input[0..(to_offset - from_offset)];
+    unsafe { Span::new_from_raw_offset(from.location_offset(), from.location_line(), fragment, ()) }
+}
+
+fn parse_number(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, sign) = opt(one_of("+-"))(s)?;
     let (s, int) = digit1(s)?;
     let (s, dot) = opt(char('.'))(s)?;
@@ -56,10 +75,11 @@ fn parse_number(s: Span) -> IResult<Span, AST> {
         };
         let integer: f64 = int.parse::<f64>().unwrap();
         let fraction: f64 = frac.parse::<f64>().unwrap() / 10f64.powf(frac.len() as f64);
+        let (s, to) = position(s)?;
         Ok((
             s,
             AST {
-                pos,
+                pos: get_span(&input, from, to),
                 body: ASTBody::NumberLiteral(NumberLiteralValue::Real(
                     (integer + fraction).copysign(sign),
                 )),
@@ -68,10 +88,11 @@ fn parse_number(s: Span) -> IResult<Span, AST> {
     } else {
         let sign: i64 = if sign.unwrap_or('+') == '+' { 1 } else { -1 };
         let integer: i64 = int.parse::<i64>().unwrap();
+        let (s, to) = position(s)?;
         Ok((
             s,
             AST {
-                pos,
+                pos: get_span(&input, from, to),
                 body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(sign * integer)),
             },
         ))
@@ -112,16 +133,17 @@ fn parse_word(s: Span) -> IResult<Span, Span> {
     )
 }
 
-fn parse_symbol(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_symbol(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     not(digit1)(s)?;
     let (s, first) = parse_word(s)?;
     let (s, after_slash) = opt(permutation((char('/'), parse_word)))(s)?;
+    let (s, to) = position(s)?;
     if let Some((_, second)) = after_slash {
         Ok((
             s,
             AST {
-                pos,
+                pos: get_span(&input, from, to),
                 body: ASTBody::Symbol {
                     ns: Some(first.fragment()),
                     name: second.fragment(),
@@ -132,7 +154,7 @@ fn parse_symbol(s: Span) -> IResult<Span, AST> {
         Ok((
             s,
             AST {
-                pos,
+                pos: get_span(&input, from, to),
                 body: ASTBody::Symbol {
                     ns: None,
                     name: first.fragment(),
@@ -142,18 +164,19 @@ fn parse_symbol(s: Span) -> IResult<Span, AST> {
     }
 }
 
-fn parse_keyword(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_keyword(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, _) = char(':')(s)?;
     let (s, second_colon) = opt(char(':'))(s)?;
     if second_colon.is_some() {
         let (s, first) = parse_word(s)?;
         let (s, after_slash) = opt(permutation((char('/'), parse_word)))(s)?;
+        let (s, to) = position(s)?;
         if let Some((_, second)) = after_slash {
             Ok((
                 s,
                 AST {
-                    pos,
+                    pos: get_span(&input, from, to),
                     body: ASTBody::Keyword {
                         ns: Some(first.fragment()),
                         name: second.fragment(),
@@ -164,7 +187,7 @@ fn parse_keyword(s: Span) -> IResult<Span, AST> {
             Ok((
                 s,
                 AST {
-                    pos,
+                    pos: get_span(&input, from, to),
                     body: ASTBody::Keyword {
                         ns: Some(""),
                         name: first.fragment(),
@@ -174,10 +197,11 @@ fn parse_keyword(s: Span) -> IResult<Span, AST> {
         }
     } else {
         let (s, name) = parse_word(s)?;
+        let (s, to) = position(s)?;
         Ok((
             s,
             AST {
-                pos,
+                pos: get_span(&input, from, to),
                 body: ASTBody::Keyword {
                     ns: None,
                     name: name.fragment(),
@@ -187,15 +211,16 @@ fn parse_keyword(s: Span) -> IResult<Span, AST> {
     }
 }
 
-fn parse_string(s: Span) -> IResult<Span, AST> {
+fn parse_string(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, _) = char('"')(s)?;
-    let (s, pos) = position(s)?;
     let (s, text) = alpha1(s)?;
     let (s, _) = char('"')(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::StringLiteral(text.fragment()),
         },
     ))
@@ -206,126 +231,138 @@ fn parse_forms(s: Span) -> IResult<Span, Vec<AST>> {
     Ok((s, forms))
 }
 
-fn parse_list(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_list(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, forms) = delimited(
-        permutation((char('('), separator0)),
-        parse_forms,
-        permutation((char(')'), separator0)),
+        char('('),
+        delimited(separator0, parse_forms, separator0),
+        char(')'),
     )(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::List(forms),
         },
     ))
 }
 
-fn parse_vector(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_vector(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, forms) = delimited(
-        permutation((char('['), separator0)),
-        parse_forms,
-        permutation((char(']'), separator0)),
+        char('['),
+        delimited(separator0, parse_forms, separator0),
+        char(']'),
     )(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::Vector(forms),
         },
     ))
 }
 
-fn parse_set(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_set(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, _) = char('#')(s)?;
     let (s, forms) = delimited(
-        permutation((char('{'), separator0)),
-        parse_forms,
-        permutation((char('}'), separator0)),
+        char('{'),
+        delimited(separator0, parse_forms, separator0),
+        char('}'),
     )(s)?;
+    let (s, to) = position(input)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::Set(forms),
         },
     ))
 }
 
-fn parse_anonymous_fn(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
-    let (s, _) = char('#')(s)?;
+fn parse_anonymous_fn(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, forms) = delimited(
-        permutation((char('('), separator0)),
-        parse_forms,
-        permutation((char(')'), separator0)),
+        tag("#("),
+        delimited(separator0, parse_forms, separator0),
+        char(')'),
     )(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::AnonymousFn(forms),
         },
     ))
 }
 
-fn parse_map(s: Span) -> IResult<Span, AST> {
+fn parse_map(input: Span) -> IResult<Span, AST> {
     fn parse_kv(s: Span) -> IResult<Span, (AST, AST)> {
         let (s, (k, _, v)) = permutation((parse_form, separator1, parse_form))(s)?;
         Ok((s, (k, v)))
     }
-    let (s, pos) = position(s)?;
+    let (s, from) = position(input)?;
+
     let (s, kvs) = delimited(
-        permutation((char('{'), separator0)),
-        separated_list0(separator1, parse_kv),
-        permutation((char('}'), separator0)),
+        char('{'),
+        delimited(
+            separator0,
+            separated_list0(separator1, parse_kv),
+            separator0,
+        ),
+        char('}'),
     )(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::Map(kvs),
         },
     ))
 }
 
-fn parse_quote(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_quote(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, _) = char('\'')(s)?;
     let (s, form) = parse_form(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::Quote(Box::new(form)),
         },
     ))
 }
 
-fn parse_unquote(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_unquote(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, _) = char('~')(s)?;
     let (s, form) = parse_form(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::UnQuote(Box::new(form)),
         },
     ))
 }
 
-fn parse_syntax_quote(s: Span) -> IResult<Span, AST> {
-    let (s, pos) = position(s)?;
+fn parse_syntax_quote(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, _) = char('`')(s)?;
     let (s, form) = parse_form(s)?;
+    let (s, to) = position(s)?;
     Ok((
         s,
         AST {
-            pos,
+            pos: get_span(&input, from, to),
             body: ASTBody::SyntaxQuote(Box::new(form)),
         },
     ))
@@ -343,9 +380,6 @@ fn parse_form(s: Span) -> IResult<Span, AST> {
         parse_set,
         parse_anonymous_fn,
         parse_map,
-        parse_quote,
-        parse_unquote,
-        parse_syntax_quote,
     ))(s)
 }
 
@@ -364,10 +398,15 @@ mod tests {
     }
     #[test]
     fn test_parse_number() {
-        assert_eq!(
-            parse_number("10".into()).unwrap().1.body,
-            ASTBody::NumberLiteral(NumberLiteralValue::Integer(10))
-        );
+        unsafe {
+            assert_eq!(
+                parse_number("10".into()).unwrap().1,
+                AST {
+                    pos: Span::new_from_raw_offset(0, 1, "10", ()),
+                    body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(10))
+                }
+            );
+        }
         assert_eq!(
             parse_number("3.14".into()).unwrap().1.body,
             ASTBody::NumberLiteral(NumberLiteralValue::Real(3.14))
@@ -380,7 +419,7 @@ mod tests {
             assert_eq!(
                 matched,
                 AST {
-                    pos: Span::new_from_raw_offset(0, 1, "", ()),
+                    pos: Span::new_from_raw_offset(0, 1, ":key-one?", ()),
                     body: ASTBody::Keyword {
                         ns: None,
                         name: "key-one?"
@@ -392,7 +431,7 @@ mod tests {
             assert_eq!(
                 matched,
                 AST {
-                    pos: Span::new_from_raw_offset(0, 1, "", ()),
+                    pos: Span::new_from_raw_offset(0, 1, ":key_.2!", ()),
                     body: ASTBody::Keyword {
                         ns: None,
                         name: "key_.2!"
@@ -427,7 +466,7 @@ mod tests {
             assert_eq!(
                 matched,
                 AST {
-                    pos: Span::new_from_raw_offset(0, 1, "", ()),
+                    pos: Span::new_from_raw_offset(0, 1, "symbol", ()),
                     body: ASTBody::Symbol {
                         ns: None,
                         name: "symbol"
@@ -447,9 +486,19 @@ mod tests {
     fn test_parse_forms() {
         unsafe {
             assert_eq!(
+                parse_vector("[  ]   ".into()).unwrap(),
+                (
+                    Span::new_from_raw_offset(4, 1, "   ", ()),
+                    AST {
+                        pos: Span::new_from_raw_offset(0, 1, "[  ]", ()),
+                        body: ASTBody::Vector(vec![])
+                    }
+                )
+            );
+            assert_eq!(
                 parse_vector("[ 1 ,,]".into()).unwrap().1.body,
                 ASTBody::Vector(vec![AST {
-                    pos: Span::new_from_raw_offset(2, 1, "", ()),
+                    pos: Span::new_from_raw_offset(2, 1, "1", ()),
                     body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
                 }])
             );
@@ -457,15 +506,15 @@ mod tests {
                 parse_set("#{1, 2, 3}".into()).unwrap().1.body,
                 ASTBody::Set(vec![
                     AST {
-                        pos: Span::new_from_raw_offset(2, 1, "", ()),
+                        pos: Span::new_from_raw_offset(2, 1, "1", ()),
                         body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
                     },
                     AST {
-                        pos: Span::new_from_raw_offset(5, 1, "", ()),
+                        pos: Span::new_from_raw_offset(5, 1, "2", ()),
                         body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(2))
                     },
                     AST {
-                        pos: Span::new_from_raw_offset(8, 1, "", ()),
+                        pos: Span::new_from_raw_offset(8, 1, "3", ()),
                         body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(3))
                     }
                 ])
@@ -474,15 +523,15 @@ mod tests {
                 parse_list("(1, 2 \n \"hello\")".into()).unwrap().1.body,
                 ASTBody::List(vec![
                     AST {
-                        pos: Span::new_from_raw_offset(1, 1, "", ()),
+                        pos: Span::new_from_raw_offset(1, 1, "1", ()),
                         body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
                     },
                     AST {
-                        pos: Span::new_from_raw_offset(4, 1, "", ()),
+                        pos: Span::new_from_raw_offset(4, 1, "2", ()),
                         body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(2))
                     },
                     AST {
-                        pos: Span::new_from_raw_offset(9, 2, "", ()),
+                        pos: Span::new_from_raw_offset(8, 2, "\"hello\"", ()),
                         body: ASTBody::StringLiteral("hello")
                     }
                 ])
@@ -491,21 +540,21 @@ mod tests {
                 parse_anonymous_fn("#(+ a b)".into()).unwrap().1.body,
                 ASTBody::AnonymousFn(vec![
                     AST {
-                        pos: Span::new_from_raw_offset(2, 1, "", ()),
+                        pos: Span::new_from_raw_offset(2, 1, "+", ()),
                         body: ASTBody::Symbol {
                             ns: None,
                             name: "+"
                         }
                     },
                     AST {
-                        pos: Span::new_from_raw_offset(4, 1, "", ()),
+                        pos: Span::new_from_raw_offset(4, 1, "a", ()),
                         body: ASTBody::Symbol {
                             ns: None,
                             name: "a"
                         }
                     },
                     AST {
-                        pos: Span::new_from_raw_offset(6, 1, "", ()),
+                        pos: Span::new_from_raw_offset(6, 1, "b", ()),
                         body: ASTBody::Symbol {
                             ns: None,
                             name: "b"
@@ -523,27 +572,27 @@ mod tests {
                 ASTBody::Map(vec![
                     (
                         AST {
-                            pos: Span::new_from_raw_offset(2, 2, "", ()),
+                            pos: Span::new_from_raw_offset(2, 2, ":a", ()),
                             body: ASTBody::Keyword {
                                 ns: None,
                                 name: "a"
                             }
                         },
                         AST {
-                            pos: Span::new_from_raw_offset(5, 2, "", ()),
+                            pos: Span::new_from_raw_offset(5, 2, "1", ()),
                             body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
                         }
                     ),
                     (
                         AST {
-                            pos: Span::new_from_raw_offset(9, 3, "", ()),
+                            pos: Span::new_from_raw_offset(9, 3, ":b", ()),
                             body: ASTBody::Keyword {
                                 ns: None,
                                 name: "b"
                             }
                         },
                         AST {
-                            pos: Span::new_from_raw_offset(13, 3, "", ()),
+                            pos: Span::new_from_raw_offset(12, 3, "\"text\"", ()),
                             body: ASTBody::StringLiteral("text")
                         }
                     )
