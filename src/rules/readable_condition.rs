@@ -1,6 +1,6 @@
 use crate::parser::{self, ASTBody};
 
-use super::{LintRule, LintLevel, LintMessage, Location};
+use super::{LintRule, LintLevel, LintMessage};
 
 pub(super) struct ReadableCondition {}
 impl LintRule for ReadableCondition {

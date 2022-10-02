@@ -1,6 +1,9 @@
 use std::fmt::Display;
 
-use crate::{parser::{self, ASTBody}, Span};
+use crate::{
+    parser::{self, ASTBody},
+    Span, Location,
+};
 mod readable_condition;
 use edn_rs;
 
@@ -8,21 +11,6 @@ pub enum LintLevel {
     Info,
     Warning,
     Error,
-}
-
-#[derive(Clone, Copy)]
-pub struct Location {
-    pub line: u32,
-    pub column: u32,
-}
-
-impl<'a> From<Span<'a>> for Location {
-    fn from(span: Span<'a>) -> Self {
-        Location {
-            line: span.location_line(),
-            column: (span.get_column() - 1) as u32, // Convert index to starting from 0
-        }
-    }
 }
 
 pub struct LintMessage {
