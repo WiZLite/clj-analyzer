@@ -94,11 +94,10 @@ fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: Analys
     let second = if let Some(second) = forms.get(1) { second } else { return; };
     if let ASTBody::Symbol { ns, name: "ns" } = first.body {
         if let ASTBody::Symbol { ns, name: ns_name } = second.body {
-            println!("inserting {}", ns_name);
             analysis.borrow_mut().namespace_definitions.insert(
                 ns_name,
                 NamespaceDef {
-                    location: ast.pos.into(),
+                    location: second.pos.into(),
                     name: ns_name,
                     filename,
                 },
