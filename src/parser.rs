@@ -55,6 +55,7 @@ pub enum ASTBody<'a> {
     SyntaxQuote(Box<AST<'a>>),
     UnQuote(Box<AST<'a>>),
     EOF, // Not necessary but maybe useful for analysis
+    Root (Vec<AST<'a>>),
 }
 
 fn get_span<'a>(input: &'a str, from: Span, to: Span) -> Span<'a> {
@@ -234,7 +235,8 @@ pub fn parse_forms(input: Span) -> IResult<Span, Vec<AST>> {
     Ok((s, forms))
 }
 
-pub fn parse_source(input: Span) -> IResult<Span, Vec<AST>> {
+pub fn parse_source(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
     let (s, mut forms) = parse_forms(input)?;
     unsafe {
         let offset = input.len();
@@ -243,7 +245,11 @@ pub fn parse_source(input: Span) -> IResult<Span, Vec<AST>> {
             pos: Span::new_from_raw_offset(offset, line, "", ()),
             body: ASTBody::EOF,
         });
-        Ok((s, forms))
+        let (s, to) = position(s)?;
+        Ok((s, AST {
+            pos: get_span(&input, from, to),
+            body: ASTBody::Root(forms)
+        }))
     }
 }
 

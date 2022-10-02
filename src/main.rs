@@ -31,23 +31,21 @@ fn main() {
             // TODO: handle syntax error
             let (_, root) = parser::parse_source(LocatedSpan::new(&content)).unwrap();
             let rules = get_rules(edn_rs::Edn::Nil);
-            for ast in root {
-                analyzer::visit_ast(path.to_str().unwrap(), &ast, &|ast| {
-                    for rule in &rules {
-                        if rule.predicate(ast) {
-                            let message = rule.get_message(ast);
-                            println!(
-                                "{}:{}:{}: {}: {}",
-                                path.display(),
-                                message.location.from_line,
-                                message.location.from_col,
-                                message.level,
-                                message.message,
-                            )
-                        }
+            analyzer::visit_ast(path.to_str().unwrap(), &root, &|ast| {
+                for rule in &rules {
+                    if rule.predicate(ast) {
+                        let message = rule.get_message(ast);
+                        println!(
+                            "{}:{}:{}: {}: {}",
+                            path.display(),
+                            message.location.from_line,
+                            message.location.from_col,
+                            message.level,
+                            message.message,
+                        )
                     }
-                })
-            }
+                }
+            })
         }
     }
 }
