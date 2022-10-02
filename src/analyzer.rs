@@ -75,9 +75,12 @@ pub fn visit_ast<'a>(filename: &str, ast: &'a AST<'a>, effect: &impl Fn(&'a AST)
             effect(&ast);
             visit_ast(filename, form, effect);
         }
-        ASTBody::UnQuote(_) => {
+        ASTBody::UnQuote(form) => {
             effect(&ast);
-            visit_ast(filename, ast, effect);
+            visit_ast(filename, form, effect);
+        }
+        ASTBody::EOF => {
+            effect(&ast);
         }
     };
 }
@@ -121,7 +124,7 @@ pub fn visit_ast_with_analyzing<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::parse_forms;
+    use crate::parser::parse_source;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -130,7 +133,7 @@ mod tests {
 
     #[test]
     fn ananalyze_ns_definitions_test() {
-        let (_, root) = parse_forms(
+        let (_, root) = parse_source(
             "(ns clj-analizer.core
 (:require [clojure.core :as core]))"
                 .into(),

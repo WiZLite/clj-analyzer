@@ -29,7 +29,7 @@ fn main() {
         SubCommand::Lint { path } => {
             let content = std::fs::read_to_string(path).expect("could not read file");
             // TODO: handle syntax error
-            let (_, root) = parser::parse_forms(LocatedSpan::new(&content)).unwrap();
+            let (_, root) = parser::parse_source(LocatedSpan::new(&content)).unwrap();
             let rules = get_rules(edn_rs::Edn::Nil);
             for ast in root {
                 analyzer::visit_ast(path.to_str().unwrap(), &ast, &|ast| {

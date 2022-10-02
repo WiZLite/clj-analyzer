@@ -54,6 +54,7 @@ pub enum ASTBody<'a> {
     Quote(Box<AST<'a>>),
     SyntaxQuote(Box<AST<'a>>),
     UnQuote(Box<AST<'a>>),
+    EOF, // Not necessary but maybe useful for analysis
 }
 
 fn get_span<'a>(input: &'a str, from: Span, to: Span) -> Span<'a> {
@@ -228,9 +229,22 @@ fn parse_string(input: Span) -> IResult<Span, AST> {
     ))
 }
 
-pub fn parse_forms(s: Span) -> IResult<Span, Vec<AST>> {
-    let (s, forms) = separated_list0(separator1, parse_form)(s)?;
+pub fn parse_forms(input: Span) -> IResult<Span, Vec<AST>> {
+    let (s, forms) = separated_list0(separator1, parse_form)(input)?;
     Ok((s, forms))
+}
+
+pub fn parse_source(input: Span) -> IResult<Span, Vec<AST>> {
+    let (s, mut forms) = parse_forms(input)?;
+    unsafe {
+        let offset = input.len();
+        let line = input.lines().count() as u32;
+        let eof = forms.push(AST {
+            pos: Span::new_from_raw_offset(offset, line, "", ()),
+            body: ASTBody::EOF,
+        });
+        Ok((s, forms))
+    }
 }
 
 fn parse_list(input: Span) -> IResult<Span, AST> {
