@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::parser::{self, ASTBody, Span};
+use crate::{parser::{self, ASTBody}, Span};
 mod readable_condition;
 use edn_rs;
 
@@ -16,8 +16,8 @@ pub struct Location {
     pub column: u32,
 }
 
-impl<'a> From<parser::Span<'a>> for Location {
-    fn from(span: parser::Span<'a>) -> Self {
+impl<'a> From<Span<'a>> for Location {
+    fn from(span: Span<'a>) -> Self {
         Location {
             line: span.location_line(),
             column: (span.get_column() - 1) as u32, // Convert index to starting from 0

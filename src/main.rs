@@ -51,3 +51,5 @@ fn main() {
         }
     }
 }
+
+pub type Span<'a> = LocatedSpan<&'a str>;

@@ -14,7 +14,7 @@ use nom::{
 };
 use nom_locate::{position, LocatedSpan};
 
-pub type Span<'a> = LocatedSpan<&'a str>;
+use crate::Span;
 
 #[derive(PartialEq, PartialOrd, Debug)]
 pub enum NumberLiteralValue {
