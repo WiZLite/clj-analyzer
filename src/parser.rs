@@ -4,9 +4,9 @@ use nom::{
     branch::{alt, permutation},
     bytes::complete::{tag, take_till, take_till1, take_until},
     character::complete::{
-        alpha1, alphanumeric1, char, digit0, digit1, multispace0, multispace1, one_of,
+        alpha1, alphanumeric1, char, digit0, digit1, multispace0, multispace1, one_of, line_ending,
     },
-    combinator::{map_res, not, opt},
+    combinator::{map_res, not, opt, eof},
     error::ParseError,
     multi::{self, count, many0, many1, separated_list0},
     sequence::delimited,
@@ -119,13 +119,22 @@ fn multispace(s: Span) -> IResult<Span, ()> {
     Ok((s, ()))
 }
 
-fn separator0(s: Span) -> IResult<Span, ()> {
-    let (s, _) = many0(alt((comma, multispace)))(s)?;
+fn comment(s: Span) -> IResult<Span, ()> {
+    let (s, _) = char(';')(s)?;
+    let (s, _) = take_till(|c: char| {
+        c == '\r' || c == '\n'
+    })(s)?;
+    let (s, _) = alt((eof, line_ending))(s)?;
     Ok((s, ()))
 }
 
-fn separator1(s: Span) -> IResult<Span, ()> {
-    let (s, _) = many1(alt((comma, multispace)))(s)?;
+fn skip0(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many0(alt((comma, multispace, comment)))(s)?;
+    Ok((s, ()))
+}
+
+fn skip1(s: Span) -> IResult<Span, ()> {
+    let (s, _) = many1(alt((comma, multispace, comment)))(s)?;
     Ok((s, ()))
 }
 
@@ -231,13 +240,15 @@ fn parse_string(input: Span) -> IResult<Span, AST> {
 }
 
 pub fn parse_forms(input: Span) -> IResult<Span, Vec<AST>> {
-    let (s, forms) = separated_list0(separator1, parse_form)(input)?;
+    let (s, forms) = separated_list0(skip1, parse_form)(input)?;
     Ok((s, forms))
 }
 
 pub fn parse_source(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
-    let (s, mut forms) = parse_forms(input)?;
+    let (s, _) = skip0(s)?;
+    let (s, mut forms) = parse_forms(s)?;
+    let (s, _) = skip0(s)?;
     unsafe {
         let offset = input.len();
         let line = input.lines().count() as u32;
@@ -257,7 +268,7 @@ fn parse_list(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, forms) = delimited(
         char('('),
-        delimited(separator0, parse_forms, separator0),
+        delimited(skip0, parse_forms, skip0),
         char(')'),
     )(s)?;
     let (s, to) = position(s)?;
@@ -274,7 +285,7 @@ fn parse_vector(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, forms) = delimited(
         char('['),
-        delimited(separator0, parse_forms, separator0),
+        delimited(skip0, parse_forms, skip0),
         char(']'),
     )(s)?;
     let (s, to) = position(s)?;
@@ -292,7 +303,7 @@ fn parse_set(input: Span) -> IResult<Span, AST> {
     let (s, _) = char('#')(s)?;
     let (s, forms) = delimited(
         char('{'),
-        delimited(separator0, parse_forms, separator0),
+        delimited(skip0, parse_forms, skip0),
         char('}'),
     )(s)?;
     let (s, to) = position(input)?;
@@ -309,7 +320,7 @@ fn parse_anonymous_fn(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, forms) = delimited(
         tag("#("),
-        delimited(separator0, parse_forms, separator0),
+        delimited(skip0, parse_forms, skip0),
         char(')'),
     )(s)?;
     let (s, to) = position(s)?;
@@ -324,7 +335,7 @@ fn parse_anonymous_fn(input: Span) -> IResult<Span, AST> {
 
 fn parse_map(input: Span) -> IResult<Span, AST> {
     fn parse_kv(s: Span) -> IResult<Span, (AST, AST)> {
-        let (s, (k, _, v)) = permutation((parse_form, separator1, parse_form))(s)?;
+        let (s, (k, _, v)) = permutation((parse_form, skip1, parse_form))(s)?;
         Ok((s, (k, v)))
     }
     let (s, from) = position(input)?;
@@ -332,9 +343,9 @@ fn parse_map(input: Span) -> IResult<Span, AST> {
     let (s, kvs) = delimited(
         char('{'),
         delimited(
-            separator0,
-            separated_list0(separator1, parse_kv),
-            separator0,
+            skip0,
+            separated_list0(skip1, parse_kv),
+            skip0,
         ),
         char('}'),
     )(s)?;
@@ -660,5 +671,44 @@ mod tests {
             }
             _ => false,
         })
+    }
+    #[test]
+    fn comment_test() {
+        let forms = match parse_source("; comment \n (def a ;; comment \r\n 10)".into()).unwrap().1.body {
+            ASTBody::Root(forms) => {
+                forms
+            },
+            _ => panic!()
+        };
+        let list = forms.first().unwrap();
+        if let ASTBody::List(forms) = &list.body {
+            unsafe {
+                assert_eq!(
+                    *forms,
+                    vec![
+                        AST {
+                            pos: Span::new_from_raw_offset(13, 2, "def", ()),
+                            body: ASTBody::Symbol {
+                                ns: None,
+                                name: "def"
+                            }
+                        },
+                        AST {
+                            pos: Span::new_from_raw_offset(17, 2, "a", ()),
+                            body: ASTBody::Symbol {
+                                ns: None,
+                                name: "a"
+                            }
+                        },
+                        AST {
+                            pos: Span::new_from_raw_offset(33, 3, "10", ()),
+                            body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(10))
+                        }
+                    ]
+                );
+            }
+        } else {
+            assert!(false);
+        }
     }
 }
