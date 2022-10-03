@@ -105,6 +105,7 @@ pub fn visit_ast<'a>(filename: &str, ast: &'a AST<'a>, effect: &impl Fn(&'a AST)
                 visit_ast(filename, form, effect)
             }
         }
+        ASTBody::Nil => effect(&ast),
     };
 }
 

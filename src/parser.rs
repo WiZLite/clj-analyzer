@@ -46,6 +46,7 @@ pub enum ASTBody<'a> {
     Keyword { ns: Option<&'a str>, name: &'a str },
     NumberLiteral(NumberLiteralValue),
     StringLiteral(&'a str),
+    Nil,
     List(Vec<AST<'a>>),
     Vector(Vec<AST<'a>>),
     Set(Vec<AST<'a>>),
@@ -401,10 +402,21 @@ fn parse_syntax_quote(input: Span) -> IResult<Span, AST> {
     ))
 }
 
+fn parse_nil(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
+    let (s, _) = tag("nil")(s)?;
+    let (s, to) = position(s)?;
+    Ok((s, AST {
+        pos: get_span(&input, from, to),
+        body: ASTBody::Nil
+    }))
+}
+
 fn parse_form(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     alt((
         parse_list,
+        parse_nil,
         parse_symbol,
         parse_keyword,
         parse_number,
@@ -670,6 +682,31 @@ mod tests {
                 }
             }
             _ => false,
+        })
+    }
+    #[test]
+    fn parse_nil_test() {
+        let result = parse_form("[a nil]".into()).unwrap();
+        assert!(match result.1.body {
+            ASTBody::Vector(forms) => {
+                unsafe {
+                    assert_eq!(forms, [
+                        AST {
+                            pos: Span::new_from_raw_offset(1,1, "a", ()),
+                            body: ASTBody::Symbol { ns: None, name: "a" }
+                        },
+                        AST {
+                            pos: Span::new_from_raw_offset(3,1, "nil", ()),
+                            body: ASTBody::Nil
+                        },
+                    ])
+                }
+                true
+            },
+            _ => {
+                println!("result is not vector");
+                false
+            }
         })
     }
     #[test]
