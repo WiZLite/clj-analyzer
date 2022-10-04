@@ -55,6 +55,7 @@ pub enum ASTBody<'a> {
     Quote(Box<AST<'a>>),
     SyntaxQuote(Box<AST<'a>>),
     UnQuote(Box<AST<'a>>),
+    MetaData(Vec<AST<'a>>),
     EOF, // Not necessary but maybe useful for analysis
     Root (Vec<AST<'a>>),
 }
@@ -412,6 +413,20 @@ fn parse_nil(input: Span) -> IResult<Span, AST> {
     }))
 }
 
+fn parse_metadata(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
+    let (s, data) = many1(delimited(
+        char('^'),
+        alt((parse_string, parse_keyword, parse_symbol, parse_map)),
+        skip1
+    ))(s)?;
+    let (s, to) = position(s)?;
+    Ok((s, AST {
+        pos: get_span(&input, from, to),
+        body: ASTBody::MetaData(data)
+    }))
+}
+
 fn parse_form(s: Span) -> IResult<Span, AST> {
     let (s, pos) = position(s)?;
     alt((
@@ -746,6 +761,57 @@ mod tests {
             }
         } else {
             assert!(false);
+        }
+    }
+    #[test]
+    fn parse_metadata_test() {
+        let (s, meta) = parse_metadata("^:keyword ^\"string\" ^{:map 1} ^symbol ".into()).unwrap();
+        assert_eq!("", s.to_string());
+        unsafe {
+            assert_eq!(
+                meta.body,
+                ASTBody::MetaData(vec![
+                    AST {
+                        pos: Span::new_from_raw_offset(1, 1, ":keyword", ()),
+                        body: ASTBody::Keyword {
+                            ns: None,
+                            name: "keyword",
+                        },
+                    },
+                    AST {
+                        pos: Span::new_from_raw_offset(11, 1, "\"string\"", ()),
+                        body: ASTBody::StringLiteral(
+                            "string",
+                        ),
+                    },
+                    AST {
+                        pos: Span::new_from_raw_offset(21, 1, "{:map 1}", ()),
+                        body: ASTBody::Map(vec![(
+                            AST {
+                                pos: Span::new_from_raw_offset(22, 1, ":map", ()),
+                                body: ASTBody::Keyword {
+                                    ns: None,
+                                    name: "map",
+                                },
+                            },
+                            AST {
+                                pos: Span::new_from_raw_offset(27, 1, "1", ()),
+                                body: ASTBody::NumberLiteral(
+                                    NumberLiteralValue::Integer(
+                                        1,
+                                    ),
+                                ),
+                            },
+                        )]),
+                    },
+                    AST {
+                        pos: Span::new_from_raw_offset(31, 1, "symbol", ()),
+                        body: ASTBody::Symbol {
+                            ns: None, name: "symbol",
+                        }
+                    }
+                ]),
+            )
         }
     }
 }
