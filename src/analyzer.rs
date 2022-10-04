@@ -25,10 +25,16 @@ pub struct VarDefinition<'a> {
     defined_by: &'a str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Binding<'a> {
+    Normal(&'a AST<'a>),
+    Destructing { key: &'a str, map: &'a AST<'a> },
+}
+
 #[derive(Debug)]
 pub struct AnalysisContext<'a> {
     current_ns: &'a str,
-    env: Vec<HashMap<&'a str, &'a AST<'a> /* AST reference of expression */>>,
+    env: Vec<HashMap<&'a str, Binding<'a>>>,
 }
 
 impl<'a> AnalysisContext<'a> {
@@ -38,15 +44,15 @@ impl<'a> AnalysisContext<'a> {
     pub fn pop_env(&mut self) {
         self.env.pop();
     }
-    pub fn push_env(&mut self, scope_env: HashMap<&'a str, &'a AST<'a>>) {
+    pub fn push_env(&mut self, scope_env: HashMap<&'a str, Binding<'a>>) {
         self.env.push(scope_env);
     }
-    pub fn bind_var(&mut self, name: &'a str, ast: &'a AST<'a>) {
+    pub fn bind_var(&mut self, name: &'a str, ast: Binding<'a>) {
         if let Some(scope) = self.env.last_mut() {
             scope.insert(name, ast);
         }
     }
-    pub fn find_var(&self, name: &str) -> Option<&AST> {
+    pub fn find_var(&self, name: &str) -> Option<Binding> {
         self.env
             .iter()
             .rev()
@@ -102,6 +108,7 @@ fn analyze_var_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: Analy
 }
 
 // Returns if there is any bindings
+// TODO: handle syntax errors.
 #[rustfmt::skip]
 fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) -> bool {
     let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return false; };
@@ -110,7 +117,6 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
     if let ASTBody::Symbol { ns, name: "let" | "if-let" | "when-let", } = &first.body {
         if let ASTBody::Vector(forms) = &second.body {
             if forms.len() % 2 != 0 {
-                // TODO: handle syntax error
                 println!(
                     "let bindings must have even number of forms. {}",
                     ast.fragment()
@@ -126,17 +132,52 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                 .push_env(new_scope);
 
             for binding in forms.chunks(2) {
-                match binding[0].body {
+                match &binding[0].body {
                     ASTBody::Symbol { ns, name } => {
                         if let Some(ns_name) = ns {
                             println!("Syntax error. Invalid var name {}/{}", ns.unwrap(), name);
                         } else {
-                            analysis.borrow_mut().context.borrow_mut().bind_var(name, &binding[1])
+                            analysis.borrow_mut().context.borrow_mut().bind_var(name, Binding::Normal(&binding[1]));
                         }
                     },
-                    // TODO: ASTBody::Map ...
+                    ASTBody::Map(kvs) => {
+                        for (k, v) in kvs {
+                            match k.body {
+                                ASTBody::Symbol { ns, name: bind_name } => {
+                                    if let ASTBody::Keyword { ns, name: key } = v.body {
+                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { key, map: &binding[1] });
+                                    } else {
+                                        println!("{}, Syntax error. Expect keyword but found {}", v.pos, v.fragment())
+                                    }
+                                },
+                                ASTBody::Keyword { ns, name: "keys" } => {
+                                    if let ASTBody::Vector(keys) = &v.body {
+                                        for key in keys {
+                                            if let ASTBody::Keyword { ns, name: bind_name } = key.body {
+                                                analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { key: bind_name, map: &binding[1] });
+                                            } else {
+                                                println!("{} Syntax error. Expect keyword but found {}",key.pos, key.fragment())
+                                            }
+                                        }
+                                    } else {
+                                        println!("{} Syntax error. Expect vector but found {}", v.pos, v.fragment())
+                                    }
+                                },
+                                ASTBody::Keyword { ns, name: "as" } => {
+                                    if let ASTBody::Symbol { ns, name: bind_name } = v.body {
+                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Normal(&binding[1]));
+                                    } else {
+                                        println!("{} Syntax error. Expect keyword but found {}", v.pos, v.fragment())
+                                    }
+                                }
+                                _ => {
+                                    println!("{} Syntax error! Invalid binding {}", v.pos, k.fragment())
+                                }
+                            }
+                        }
+                    }
                     _ => {
-                        println!("Syntax error! Invalid binding {}", ast.fragment());
+                        println!("Syntax error! Expect symbol or map but found {}", ast.fragment());
                         return false;
                     }
                 }
@@ -304,7 +345,7 @@ mod tests {
         });
     }
     #[test]
-    fn analyze_let_binding_test() {
+    fn analyze_let_binding_simple_case_test() {
         let source = "(let [a 1
                             b \"hello\"]
                         (+ a 1)
@@ -321,7 +362,7 @@ mod tests {
                 if let ASTBody::Symbol { ns, name: "a" } = ast.body {
                     if !*first_a_visited.borrow() {
                         *first_a_visited.borrow_mut() = true;
-                        return; 
+                        return;
                     } else {
                         assert!(if let Some(binded) =
                             analysis.borrow().context.borrow().find_var("a")
@@ -329,12 +370,12 @@ mod tests {
                             unsafe {
                                 assert_eq!(
                                     binded,
-                                    &AST {
+                                    Binding::Normal(&AST {
                                         pos: Span::new_from_raw_offset(8, 1, "1", ()),
                                         body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(
                                             1
                                         )),
-                                    }
+                                    })
                                 )
                             }
                             true
@@ -354,10 +395,10 @@ mod tests {
                             unsafe {
                                 assert_eq!(
                                     binded,
-                                    &AST {
+                                    Binding::Normal(&AST {
                                         pos: Span::new_from_raw_offset(40, 2, "\"hello\"", ()),
                                         body: ASTBody::StringLiteral("hello"),
-                                    }
+                                    })
                                 )
                             }
                             true
@@ -374,5 +415,109 @@ mod tests {
         assert!(*second_a_visited.borrow());
         assert!(*first_b_visited.borrow());
         assert!(*second_b_visited.borrow());
+    }
+    #[test]
+    fn analyze_let_bindings_destructing_case_test() {
+        let source = "(when-let [{:as a b :key :keys [:c :d]} values]
+                        (str a b c d))";
+        let (s, root) = parse_source(source.into()).unwrap();
+        let mut first_a_visited = RefCell::new(false);
+        let mut second_a_visited = RefCell::new(false);
+        let mut first_b_visited = RefCell::new(false);
+        let mut second_b_visited = RefCell::new(false);
+        let mut c_visited = RefCell::new(false);
+        let mut d_visited = RefCell::new(false);
+
+        unsafe {
+            let values_ast = AST {
+                pos: Span::new_from_raw_offset(40, 1, "values", ()),
+                body: ASTBody::Symbol {
+                    ns: None,
+                    name: "values",
+                },
+            };
+            visit_ast_with_analyzing(
+                "src/sample.clj",
+                &root,
+                &|ast, analysis| {
+                    if let ASTBody::Symbol { ns, name: "a" } = ast.body {
+                        if !*first_a_visited.borrow() {
+                            *first_a_visited.borrow_mut() = true;
+                            return;
+                        } else {
+                            assert!(if let Some(binded) =
+                                analysis.borrow().context.borrow().find_var("a")
+                            {
+                                unsafe { assert_eq!(binded, Binding::Normal(&values_ast),) }
+                                true
+                            } else {
+                                false
+                            });
+                            *second_a_visited.borrow_mut() = true;
+                        }
+                    } else if let ASTBody::Symbol { ns, name: "b" } = ast.body {
+                        if !*first_b_visited.borrow() {
+                            *first_b_visited.borrow_mut() = true;
+                            return;
+                        } else {
+                            assert!(if let Some(binded) =
+                                analysis.borrow().context.borrow().find_var("b")
+                            {
+                                assert_eq!(
+                                    binded,
+                                    Binding::Destructing {
+                                        key: "key",
+                                        map: &values_ast
+                                    }
+                                );
+                                true
+                            } else {
+                                false
+                            });
+                            *second_b_visited.borrow_mut() = true;
+                        }
+                    } else if let ASTBody::Symbol { ns, name: "c" } = ast.body {
+                        assert!(if let Some(binded) =
+                            analysis.borrow().context.borrow().find_var("c")
+                        {
+                            assert_eq!(
+                                binded,
+                                Binding::Destructing {
+                                    key: "c",
+                                    map: &values_ast
+                                }
+                            );
+                            true
+                        } else {
+                            false
+                        });
+                        *c_visited.borrow_mut() = true;
+                    } else if let ASTBody::Symbol { ns, name: "d" } = ast.body {
+                        assert!(if let Some(binded) =
+                            analysis.borrow().context.borrow().find_var("c")
+                        {
+                            assert_eq!(
+                                binded,
+                                Binding::Destructing {
+                                    key: "c",
+                                    map: &values_ast
+                                }
+                            );
+                            true
+                        } else {
+                            false
+                        });
+                        *d_visited.borrow_mut() = true;
+                    }
+                },
+                do_nothing_on_end,
+            );
+            assert!(*first_a_visited.borrow());
+            assert!(*second_a_visited.borrow());
+            assert!(*first_b_visited.borrow());
+            assert!(*second_b_visited.borrow());
+            assert!(*c_visited.borrow());
+            assert!(*d_visited.borrow());
+        }
     }
 }
