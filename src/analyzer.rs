@@ -143,6 +143,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                     ASTBody::Symbol { ns, name } => {
                         if let Some(ns_name) = ns {
                             println!("Syntax error. Invalid var name {}/{}", ns.unwrap(), name);
+                            return false;
                         } else {
                             analysis.borrow_mut().context.borrow_mut().bind_var(name, Binding::Normal{ bound_by: &binding[0], value: &binding[1]});
                         }
@@ -155,7 +156,8 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                     if let ASTBody::Keyword { ns, name: key } = v.body {
                                         analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { bound_to:k, key, map: &binding[1] });
                                     } else {
-                                        println!("{}, Syntax error. Expect keyword but found {}", v.pos, v.fragment())
+                                        println!("{}, Syntax error. Expect keyword but found {}", v.pos, v.fragment());
+                                        return false;
                                     }
                                 },
                                 // ex) [{:keys [:a :b :c]} values]
@@ -165,11 +167,13 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                             if let ASTBody::Keyword { ns, name: bind_name } = key.body {
                                                 analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { bound_to: key, key: bind_name, map: &binding[1] });
                                             } else {
-                                                println!("{} Syntax error. Expect keyword but found {}",key.pos, key.fragment())
+                                                println!("{} Syntax error. Expect keyword but found {}",key.pos, key.fragment());
+                                                return false;
                                             }
                                         }
                                     } else {
-                                        println!("{} Syntax error. Expect vector but found {}", v.pos, v.fragment())
+                                        println!("{} Syntax error. Expect vector but found {}", v.pos, v.fragment());
+                                        return false;
                                     }
                                 },
                                 // ex) [{:as context ...}]
@@ -181,7 +185,8 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                     }
                                 }
                                 _ => {
-                                    println!("{} Syntax error! Invalid binding {}", v.pos, k.fragment())
+                                    println!("{} Syntax error! Invalid binding {}", v.pos, k.fragment());
+                                    return false;
                                 }
                             }
                         }
@@ -192,10 +197,14 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                     }
                 }
             }
-            return true;
+        } else {
+            return false;
         }
+    } else {
+        return false;
     }
-    false
+    println!("returning true");
+    true
 }
 
 #[rustfmt::skip]
@@ -234,12 +243,18 @@ pub fn _visit_ast_with_analyzing<'a>(
             analyze_var_definitions(filename, ast, analysis.clone());
             let is_scope = analyze_let_bindings(filename, ast, analysis.clone());
 
+            dbg!((ast.fragment(), is_scope));
+
             effect(&ast);
+
             for form in forms {
                 _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
             }
 
+            dbg!((ast.fragment(), is_scope));
+
             if is_scope {
+                dbg!("popping");
                 analysis.borrow_mut().context.borrow_mut().pop_env();
             }
         }
@@ -359,12 +374,14 @@ mod tests {
         let source = "(let [a 1
                             b \"hello\"]
                         (+ a 1)
-                        (not b))";
+                        (not b))
+                        end)";
         let (_, root) = parse_source(source.into()).unwrap();
         let mut first_a_visited = RefCell::new(false);
         let mut second_a_visited = RefCell::new(false);
         let mut first_b_visited = RefCell::new(false);
         let mut second_b_visited = RefCell::new(false);
+        let mut end_visited = RefCell::new(false);
         visit_ast_with_analyzing(
             "src/sample.clj",
             &root,
@@ -437,6 +454,11 @@ mod tests {
                         *second_b_visited.borrow_mut() = true;
                     }
                 }
+                ASTBody::Symbol { ns, name: "end" } => {
+                    *end_visited.borrow_mut() = true;
+                    assert!(analysis.borrow().context.borrow().find_var("a").is_none());
+                    assert!(analysis.borrow().context.borrow().find_var("b").is_none());
+                }
                 _ => (),
             },
             do_nothing_on_end,
@@ -445,11 +467,13 @@ mod tests {
         assert!(*second_a_visited.borrow());
         assert!(*first_b_visited.borrow());
         assert!(*second_b_visited.borrow());
+        assert!(*end_visited.borrow());
     }
     #[test]
     fn analyze_let_bindings_destructing_case_test() {
         let source = "(when-let [{:as a b :key :keys [:c :d]} values]
-                        (str a b c d))";
+                        (str a b c d))
+                        end";
         let (s, root) = parse_source(source.into()).unwrap();
         let mut first_a_visited = RefCell::new(false);
         let mut second_a_visited = RefCell::new(false);
@@ -457,6 +481,7 @@ mod tests {
         let mut second_b_visited = RefCell::new(false);
         let mut c_visited = RefCell::new(false);
         let mut d_visited = RefCell::new(false);
+        let mut end_visited = RefCell::new(false);
 
         unsafe {
             let values_ast = AST {
@@ -577,6 +602,13 @@ mod tests {
                         });
                         *d_visited.borrow_mut() = true;
                     }
+                    ASTBody::Symbol { ns, name: "end" } => {
+                        *end_visited.borrow_mut() = true;
+                        assert!(analysis.borrow().context.borrow().find_var("a").is_none());
+                        assert!(analysis.borrow().context.borrow().find_var("b").is_none());
+                        assert!(analysis.borrow().context.borrow().find_var("c").is_none());
+                        assert!(analysis.borrow().context.borrow().find_var("d").is_none());
+                    }
                     _ => (),
                 },
                 do_nothing_on_end,
@@ -587,6 +619,7 @@ mod tests {
             assert!(*second_b_visited.borrow());
             assert!(*c_visited.borrow());
             assert!(*d_visited.borrow());
+            assert!(*end_visited.borrow());
         }
     }
 }
