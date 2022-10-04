@@ -4,7 +4,7 @@ use nom::{
     branch::{alt, permutation},
     bytes::complete::{tag, take_till, take_till1, take_until},
     character::complete::{
-        alpha1, alphanumeric1, char, digit0, digit1, line_ending, multispace0, multispace1, one_of,
+        alpha1, alphanumeric1, char, digit0, digit1, line_ending, multispace0, multispace1, one_of, newline, anychar,
     },
     combinator::{eof, map_res, not, opt},
     error::ParseError,
@@ -250,6 +250,13 @@ fn parse_string(input: Span) -> IResult<Span, AST> {
             body: ASTBody::StringLiteral(text.fragment()),
         },
     ))
+}
+
+fn parse_char(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
+    let (s, _) = char('\\')(s)?;
+    let (val, _) = alt((anychar, tag("newline"), tag("space"), tag("tab"), tag("formfeed"), tag("backspace")))(s)?;
+    let (s, to) = position(s)?;
 }
 
 pub fn parse_forms(input: Span) -> IResult<Span, Vec<AST>> {
