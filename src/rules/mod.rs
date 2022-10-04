@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::{
     parser::{self, ASTBody},
-    Span, Location,
+    Location, Span,
 };
 mod readable_condition;
 use edn_rs;

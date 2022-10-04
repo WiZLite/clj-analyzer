@@ -4,9 +4,9 @@ use nom::{
     branch::{alt, permutation},
     bytes::complete::{tag, take_till, take_till1, take_until},
     character::complete::{
-        alpha1, alphanumeric1, char, digit0, digit1, multispace0, multispace1, one_of, line_ending,
+        alpha1, alphanumeric1, char, digit0, digit1, line_ending, multispace0, multispace1, one_of,
     },
-    combinator::{map_res, not, opt, eof},
+    combinator::{eof, map_res, not, opt},
     error::ParseError,
     multi::{self, count, many0, many1, separated_list0},
     sequence::delimited,
@@ -57,7 +57,7 @@ pub enum ASTBody<'a> {
     UnQuote(Box<AST<'a>>),
     MetaData(Vec<AST<'a>>),
     EOF, // Not necessary but maybe useful for analysis
-    Root (Vec<AST<'a>>),
+    Root(Vec<AST<'a>>),
 }
 
 fn get_span<'a>(input: &'a str, from: Span, to: Span) -> Span<'a> {
@@ -123,9 +123,7 @@ fn multispace(s: Span) -> IResult<Span, ()> {
 
 fn comment(s: Span) -> IResult<Span, ()> {
     let (s, _) = char(';')(s)?;
-    let (s, _) = take_till(|c: char| {
-        c == '\r' || c == '\n'
-    })(s)?;
+    let (s, _) = take_till(|c: char| c == '\r' || c == '\n')(s)?;
     let (s, _) = alt((eof, line_ending))(s)?;
     Ok((s, ()))
 }
@@ -259,20 +257,19 @@ pub fn parse_source(input: Span) -> IResult<Span, AST> {
             body: ASTBody::EOF,
         });
         let (s, to) = position(s)?;
-        Ok((s, AST {
-            pos: get_span(&input, from, to),
-            body: ASTBody::Root(forms)
-        }))
+        Ok((
+            s,
+            AST {
+                pos: get_span(&input, from, to),
+                body: ASTBody::Root(forms),
+            },
+        ))
     }
 }
 
 fn parse_list(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
-    let (s, forms) = delimited(
-        char('('),
-        delimited(skip0, parse_forms, skip0),
-        char(')'),
-    )(s)?;
+    let (s, forms) = delimited(char('('), delimited(skip0, parse_forms, skip0), char(')'))(s)?;
     let (s, to) = position(s)?;
     Ok((
         s,
@@ -285,11 +282,7 @@ fn parse_list(input: Span) -> IResult<Span, AST> {
 
 fn parse_vector(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
-    let (s, forms) = delimited(
-        char('['),
-        delimited(skip0, parse_forms, skip0),
-        char(']'),
-    )(s)?;
+    let (s, forms) = delimited(char('['), delimited(skip0, parse_forms, skip0), char(']'))(s)?;
     let (s, to) = position(s)?;
     Ok((
         s,
@@ -303,11 +296,7 @@ fn parse_vector(input: Span) -> IResult<Span, AST> {
 fn parse_set(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, _) = char('#')(s)?;
-    let (s, forms) = delimited(
-        char('{'),
-        delimited(skip0, parse_forms, skip0),
-        char('}'),
-    )(s)?;
+    let (s, forms) = delimited(char('{'), delimited(skip0, parse_forms, skip0), char('}'))(s)?;
     let (s, to) = position(input)?;
     Ok((
         s,
@@ -320,11 +309,7 @@ fn parse_set(input: Span) -> IResult<Span, AST> {
 
 fn parse_anonymous_fn(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
-    let (s, forms) = delimited(
-        tag("#("),
-        delimited(skip0, parse_forms, skip0),
-        char(')'),
-    )(s)?;
+    let (s, forms) = delimited(tag("#("), delimited(skip0, parse_forms, skip0), char(')'))(s)?;
     let (s, to) = position(s)?;
     Ok((
         s,
@@ -344,11 +329,7 @@ fn parse_map(input: Span) -> IResult<Span, AST> {
 
     let (s, kvs) = delimited(
         char('{'),
-        delimited(
-            skip0,
-            separated_list0(skip1, parse_kv),
-            skip0,
-        ),
+        delimited(skip0, separated_list0(skip1, parse_kv), skip0),
         char('}'),
     )(s)?;
     let (s, to) = position(s)?;
@@ -407,10 +388,13 @@ fn parse_nil(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, _) = tag("nil")(s)?;
     let (s, to) = position(s)?;
-    Ok((s, AST {
-        pos: get_span(&input, from, to),
-        body: ASTBody::Nil
-    }))
+    Ok((
+        s,
+        AST {
+            pos: get_span(&input, from, to),
+            body: ASTBody::Nil,
+        },
+    ))
 }
 
 fn parse_metadata(input: Span) -> IResult<Span, AST> {
@@ -418,13 +402,16 @@ fn parse_metadata(input: Span) -> IResult<Span, AST> {
     let (s, data) = many1(delimited(
         char('^'),
         alt((parse_string, parse_keyword, parse_symbol, parse_map)),
-        skip1
+        skip1,
     ))(s)?;
     let (s, to) = position(s)?;
-    Ok((s, AST {
-        pos: get_span(&input, from, to),
-        body: ASTBody::MetaData(data)
-    }))
+    Ok((
+        s,
+        AST {
+            pos: get_span(&input, from, to),
+            body: ASTBody::MetaData(data),
+        },
+    ))
 }
 
 fn parse_form(s: Span) -> IResult<Span, AST> {
@@ -705,19 +692,25 @@ mod tests {
         assert!(match result.1.body {
             ASTBody::Vector(forms) => {
                 unsafe {
-                    assert_eq!(forms, [
-                        AST {
-                            pos: Span::new_from_raw_offset(1,1, "a", ()),
-                            body: ASTBody::Symbol { ns: None, name: "a" }
-                        },
-                        AST {
-                            pos: Span::new_from_raw_offset(3,1, "nil", ()),
-                            body: ASTBody::Nil
-                        },
-                    ])
+                    assert_eq!(
+                        forms,
+                        [
+                            AST {
+                                pos: Span::new_from_raw_offset(1, 1, "a", ()),
+                                body: ASTBody::Symbol {
+                                    ns: None,
+                                    name: "a"
+                                }
+                            },
+                            AST {
+                                pos: Span::new_from_raw_offset(3, 1, "nil", ()),
+                                body: ASTBody::Nil
+                            },
+                        ]
+                    )
                 }
                 true
-            },
+            }
             _ => {
                 println!("result is not vector");
                 false
@@ -726,11 +719,13 @@ mod tests {
     }
     #[test]
     fn comment_test() {
-        let forms = match parse_source("; comment \n (def a ;; comment \r\n 10)".into()).unwrap().1.body {
-            ASTBody::Root(forms) => {
-                forms
-            },
-            _ => panic!()
+        let forms = match parse_source("; comment \n (def a ;; comment \r\n 10)".into())
+            .unwrap()
+            .1
+            .body
+        {
+            ASTBody::Root(forms) => forms,
+            _ => panic!(),
         };
         let list = forms.first().unwrap();
         if let ASTBody::List(forms) = &list.body {
@@ -780,9 +775,7 @@ mod tests {
                     },
                     AST {
                         pos: Span::new_from_raw_offset(11, 1, "\"string\"", ()),
-                        body: ASTBody::StringLiteral(
-                            "string",
-                        ),
+                        body: ASTBody::StringLiteral("string"),
                     },
                     AST {
                         pos: Span::new_from_raw_offset(21, 1, "{:map 1}", ()),
@@ -796,18 +789,15 @@ mod tests {
                             },
                             AST {
                                 pos: Span::new_from_raw_offset(27, 1, "1", ()),
-                                body: ASTBody::NumberLiteral(
-                                    NumberLiteralValue::Integer(
-                                        1,
-                                    ),
-                                ),
+                                body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1)),
                             },
                         )]),
                     },
                     AST {
                         pos: Span::new_from_raw_offset(31, 1, "symbol", ()),
                         body: ASTBody::Symbol {
-                            ns: None, name: "symbol",
+                            ns: None,
+                            name: "symbol",
                         }
                     }
                 ]),

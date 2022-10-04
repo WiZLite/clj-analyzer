@@ -199,7 +199,8 @@ mod tests {
     }
     #[test]
     fn analyze_var_definition_test() {
-        let (_, root) = parse_source("(ns test.core) (def a 10) (defrecord b (+ 1 2))".into()).unwrap();
+        let (_, root) =
+            parse_source("(ns test.core) (def a 10) (defrecord b (+ 1 2))".into()).unwrap();
         visit_ast_with_analyzing("src/sample.clj".into(), &root, &do_nothing, |a| {
             let a_def = a.var_definitions.get(&("test.core", "a")).unwrap();
             assert_eq!(a_def.name, "a");
