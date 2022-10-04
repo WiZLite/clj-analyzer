@@ -358,8 +358,8 @@ mod tests {
         visit_ast_with_analyzing(
             "src/sample.clj",
             &root,
-            &|ast, analysis| {
-                if let ASTBody::Symbol { ns, name: "a" } = ast.body {
+            &|ast, analysis| match ast.body {
+                ASTBody::Symbol { ns, name: "a" } => {
                     if !*first_a_visited.borrow() {
                         *first_a_visited.borrow_mut() = true;
                         return;
@@ -384,7 +384,8 @@ mod tests {
                         });
                         *second_a_visited.borrow_mut() = true;
                     }
-                } else if let ASTBody::Symbol { ns, name: "b" } = ast.body {
+                }
+                ASTBody::Symbol { ns, name: "b" } => {
                     if !*first_b_visited.borrow() {
                         *first_b_visited.borrow_mut() = true;
                         return;
@@ -408,6 +409,7 @@ mod tests {
                         *second_b_visited.borrow_mut() = true;
                     }
                 }
+                _ => (),
             },
             do_nothing_on_end,
         );
@@ -439,8 +441,8 @@ mod tests {
             visit_ast_with_analyzing(
                 "src/sample.clj",
                 &root,
-                &|ast, analysis| {
-                    if let ASTBody::Symbol { ns, name: "a" } = ast.body {
+                &|ast, analysis| match ast.body {
+                    ASTBody::Symbol { ns, name: "a" } => {
                         if !*first_a_visited.borrow() {
                             *first_a_visited.borrow_mut() = true;
                             return;
@@ -455,7 +457,8 @@ mod tests {
                             });
                             *second_a_visited.borrow_mut() = true;
                         }
-                    } else if let ASTBody::Symbol { ns, name: "b" } = ast.body {
+                    }
+                    ASTBody::Symbol { ns, name: "b" } => {
                         if !*first_b_visited.borrow() {
                             *first_b_visited.borrow_mut() = true;
                             return;
@@ -476,7 +479,8 @@ mod tests {
                             });
                             *second_b_visited.borrow_mut() = true;
                         }
-                    } else if let ASTBody::Symbol { ns, name: "c" } = ast.body {
+                    }
+                    ASTBody::Symbol { ns, name: "c" } => {
                         assert!(if let Some(binded) =
                             analysis.borrow().context.borrow().find_var("c")
                         {
@@ -492,7 +496,8 @@ mod tests {
                             false
                         });
                         *c_visited.borrow_mut() = true;
-                    } else if let ASTBody::Symbol { ns, name: "d" } = ast.body {
+                    }
+                    ASTBody::Symbol { ns, name: "d" } => {
                         assert!(if let Some(binded) =
                             analysis.borrow().context.borrow().find_var("c")
                         {
@@ -509,6 +514,7 @@ mod tests {
                         });
                         *d_visited.borrow_mut() = true;
                     }
+                    _ => (),
                 },
                 do_nothing_on_end,
             );
