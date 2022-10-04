@@ -427,6 +427,7 @@ fn parse_form(s: Span) -> IResult<Span, AST> {
         parse_set,
         parse_anonymous_fn,
         parse_map,
+        parse_metadata,
     ))(s)
 }
 
