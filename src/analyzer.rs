@@ -27,8 +27,15 @@ pub struct VarDefinition<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Binding<'a> {
-    Normal(&'a AST<'a>),
-    Destructing { key: &'a str, map: &'a AST<'a> },
+    Normal {
+        bound_by: &'a AST<'a>,
+        value: &'a AST<'a>,
+    },
+    Destructing {
+        bound_to: &'a AST<'a>,
+        key: &'a str,
+        map: &'a AST<'a>,
+    },
 }
 
 #[derive(Debug)]
@@ -137,24 +144,26 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                         if let Some(ns_name) = ns {
                             println!("Syntax error. Invalid var name {}/{}", ns.unwrap(), name);
                         } else {
-                            analysis.borrow_mut().context.borrow_mut().bind_var(name, Binding::Normal(&binding[1]));
+                            analysis.borrow_mut().context.borrow_mut().bind_var(name, Binding::Normal{ bound_by: &binding[0], value: &binding[1]});
                         }
                     },
                     ASTBody::Map(kvs) => {
                         for (k, v) in kvs {
                             match k.body {
+                                // ex) [{binded_symbol :key} values]
                                 ASTBody::Symbol { ns, name: bind_name } => {
                                     if let ASTBody::Keyword { ns, name: key } = v.body {
-                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { key, map: &binding[1] });
+                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { bound_to:k, key, map: &binding[1] });
                                     } else {
                                         println!("{}, Syntax error. Expect keyword but found {}", v.pos, v.fragment())
                                     }
                                 },
+                                // ex) [{:keys [:a :b :c]} values]
                                 ASTBody::Keyword { ns, name: "keys" } => {
                                     if let ASTBody::Vector(keys) = &v.body {
                                         for key in keys {
                                             if let ASTBody::Keyword { ns, name: bind_name } = key.body {
-                                                analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { key: bind_name, map: &binding[1] });
+                                                analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Destructing { bound_to: key, key: bind_name, map: &binding[1] });
                                             } else {
                                                 println!("{} Syntax error. Expect keyword but found {}",key.pos, key.fragment())
                                             }
@@ -163,9 +172,10 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                         println!("{} Syntax error. Expect vector but found {}", v.pos, v.fragment())
                                     }
                                 },
+                                // ex) [{:as context ...}]
                                 ASTBody::Keyword { ns, name: "as" } => {
                                     if let ASTBody::Symbol { ns, name: bind_name } = v.body {
-                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Normal(&binding[1]));
+                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, Binding::Normal{ bound_by: v, value: &binding[1]});
                                     } else {
                                         println!("{} Syntax error. Expect keyword but found {}", v.pos, v.fragment())
                                     }
@@ -370,12 +380,21 @@ mod tests {
                             unsafe {
                                 assert_eq!(
                                     binded,
-                                    Binding::Normal(&AST {
-                                        pos: Span::new_from_raw_offset(8, 1, "1", ()),
-                                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(
-                                            1
-                                        )),
-                                    })
+                                    Binding::Normal {
+                                        bound_by: &AST {
+                                            pos: Span::new_from_raw_offset(6, 1, "a", ()),
+                                            body: ASTBody::Symbol {
+                                                ns: None,
+                                                name: "a"
+                                            }
+                                        },
+                                        value: &AST {
+                                            pos: Span::new_from_raw_offset(8, 1, "1", ()),
+                                            body: ASTBody::NumberLiteral(
+                                                NumberLiteralValue::Integer(1)
+                                            ),
+                                        }
+                                    }
                                 )
                             }
                             true
@@ -396,10 +415,19 @@ mod tests {
                             unsafe {
                                 assert_eq!(
                                     binded,
-                                    Binding::Normal(&AST {
-                                        pos: Span::new_from_raw_offset(40, 2, "\"hello\"", ()),
-                                        body: ASTBody::StringLiteral("hello"),
-                                    })
+                                    Binding::Normal {
+                                        bound_by: &AST {
+                                            pos: Span::new_from_raw_offset(38, 2, "b", ()),
+                                            body: ASTBody::Symbol {
+                                                ns: None,
+                                                name: "b"
+                                            }
+                                        },
+                                        value: &AST {
+                                            pos: Span::new_from_raw_offset(40, 2, "\"hello\"", ()),
+                                            body: ASTBody::StringLiteral("hello"),
+                                        }
+                                    }
                                 )
                             }
                             true
@@ -450,7 +478,21 @@ mod tests {
                             assert!(if let Some(binded) =
                                 analysis.borrow().context.borrow().find_var("a")
                             {
-                                unsafe { assert_eq!(binded, Binding::Normal(&values_ast),) }
+                                unsafe {
+                                    assert_eq!(
+                                        binded,
+                                        Binding::Normal {
+                                            bound_by: &AST {
+                                                pos: Span::new_from_raw_offset(16, 1, "a", ()),
+                                                body: ASTBody::Symbol {
+                                                    ns: None,
+                                                    name: "a"
+                                                }
+                                            },
+                                            value: &values_ast
+                                        },
+                                    )
+                                }
                                 true
                             } else {
                                 false
@@ -469,6 +511,13 @@ mod tests {
                                 assert_eq!(
                                     binded,
                                     Binding::Destructing {
+                                        bound_to: &AST {
+                                            pos: Span::new_from_raw_offset(18, 1, "b", ()),
+                                            body: ASTBody::Symbol {
+                                                ns: None,
+                                                name: "b"
+                                            }
+                                        },
                                         key: "key",
                                         map: &values_ast
                                     }
@@ -487,6 +536,13 @@ mod tests {
                             assert_eq!(
                                 binded,
                                 Binding::Destructing {
+                                    bound_to: &AST {
+                                        pos: Span::new_from_raw_offset(32, 1, ":c", ()),
+                                        body: ASTBody::Keyword {
+                                            ns: None,
+                                            name: "c"
+                                        }
+                                    },
                                     key: "c",
                                     map: &values_ast
                                 }
@@ -499,12 +555,19 @@ mod tests {
                     }
                     ASTBody::Symbol { ns, name: "d" } => {
                         assert!(if let Some(binded) =
-                            analysis.borrow().context.borrow().find_var("c")
+                            analysis.borrow().context.borrow().find_var("d")
                         {
                             assert_eq!(
                                 binded,
                                 Binding::Destructing {
-                                    key: "c",
+                                    bound_to: &AST {
+                                        pos: Span::new_from_raw_offset(35, 1, ":d", ()),
+                                        body: ASTBody::Keyword {
+                                            ns: None,
+                                            name: "d"
+                                        }
+                                    },
+                                    key: "d",
                                     map: &values_ast
                                 }
                             );
