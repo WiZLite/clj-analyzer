@@ -47,92 +47,8 @@ impl<'a> Analysis<'a> {
     }
 }
 
-pub fn visit_ast<'a>(filename: &str, ast: &'a AST<'a>, effect: &impl Fn(&'a AST) -> ()) {
-    match &ast.body {
-        ASTBody::Symbol { ns, name } => effect(ast),
-        ASTBody::Keyword { ns, name } => effect(&ast),
-        ASTBody::NumberLiteral(_) => effect(&ast),
-        ASTBody::StringLiteral(_) => effect(&ast),
-        ASTBody::List(forms) => {
-            effect(&ast);
-            for form in forms {
-                visit_ast(filename, form, effect)
-            }
-        }
-        ASTBody::Vector(forms) => {
-            effect(&ast);
-            for form in forms {
-                visit_ast(filename, form, effect)
-            }
-        }
-        ASTBody::Set(forms) => {
-            effect(&ast);
-            for form in forms {
-                visit_ast(filename, form, effect);
-            }
-        }
-        ASTBody::Map(forms) => {
-            effect(&ast);
-            for (k, v) in forms {
-                visit_ast(filename, k, effect);
-                visit_ast(filename, v, effect);
-            }
-        }
-        ASTBody::AnonymousFn(forms) => {
-            effect(&ast);
-            for form in forms {
-                visit_ast(filename, form, effect)
-            }
-        }
-        ASTBody::Quote(form) => {
-            effect(&ast);
-            visit_ast(filename, form, effect);
-        }
-        ASTBody::SyntaxQuote(form) => {
-            effect(&ast);
-            visit_ast(filename, form, effect);
-        }
-        ASTBody::UnQuote(form) => {
-            effect(&ast);
-            visit_ast(filename, form, effect);
-        }
-        ASTBody::EOF => {
-            effect(&ast);
-        }
-        ASTBody::Root(forms) => {
-            effect(&ast);
-            for form in forms {
-                visit_ast(filename, form, effect)
-            }
-        }
-        ASTBody::Nil => effect(&ast),
-        ASTBody::MetaData(_) => effect(&ast),
-    };
-}
-
 type AnalysisCell<'a> = Rc<RefCell<Analysis<'a>>>;
 
-#[rustfmt::skip]
-fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
-    let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
-    let first = if let Some(first) = forms.get(0) { first } else { return; };
-    let second = if let Some(second) = forms.get(1) { second } else { return; };
-    if let ASTBody::Symbol { ns, name: "ns" } = first.body {
-        if let ASTBody::Symbol { ns, name: ns_name } = second.body {
-            analysis.borrow_mut().namespace_definitions.insert(
-                ns_name,
-                NamespaceDef {
-                    location: second.pos.into(),
-                    name: ns_name,
-                    filename,
-                },
-            );
-            *analysis.borrow_mut().context.borrow_mut() = AnalysisContext {
-                current_ns: ns_name
-            }
-        }
-    }
-}
 
 #[rustfmt::skip]
 fn analyze_var_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
@@ -157,6 +73,93 @@ fn analyze_var_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: Analy
     }
 }
 
+#[rustfmt::skip]
+fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
+    let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
+    let first = if let Some(first) = forms.get(0) { first } else { return; };
+    let second = if let Some(second) = forms.get(1) { second } else { return; };
+    if let ASTBody::Symbol { ns, name: "ns" } = first.body {
+        if let ASTBody::Symbol { ns, name: ns_name } = second.body {
+            analysis.borrow_mut().namespace_definitions.insert(
+                ns_name,
+                NamespaceDef {
+                    location: second.pos.into(),
+                    name: ns_name,
+                    filename,
+                },
+            );
+            *analysis.borrow_mut().context.borrow_mut() = AnalysisContext {
+                current_ns: ns_name
+            }
+        }
+    }
+}
+
+pub fn _visit_ast_with_analyzing<'a>(filename: &'a str, ast: &'a AST<'a>, effect: &impl Fn(&'a AST) -> (), analysis: AnalysisCell<'a>) {
+    analyze_ns_definitions(filename, ast, analysis.clone());
+    analyze_var_definitions(filename, ast, analysis.clone());
+    match &ast.body {
+        ASTBody::Symbol { ns, name } => effect(ast),
+        ASTBody::Keyword { ns, name } => effect(&ast),
+        ASTBody::NumberLiteral(_) => effect(&ast),
+        ASTBody::StringLiteral(_) => effect(&ast),
+        ASTBody::List(forms) => {
+            effect(&ast);
+            for form in forms {
+                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
+            }
+        }
+        ASTBody::Vector(forms) => {
+            effect(&ast);
+            for form in forms {
+                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
+            }
+        }
+        ASTBody::Set(forms) => {
+            effect(&ast);
+            for form in forms {
+                _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
+            }
+        }
+        ASTBody::Map(forms) => {
+            effect(&ast);
+            for (k, v) in forms {
+                _visit_ast_with_analyzing(filename, k, effect, analysis.clone());
+                _visit_ast_with_analyzing(filename, v, effect, analysis.clone());
+            }
+        }
+        ASTBody::AnonymousFn(forms) => {
+            effect(&ast);
+            for form in forms {
+                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
+            }
+        }
+        ASTBody::Quote(form) => {
+            effect(&ast);
+            _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
+        }
+        ASTBody::SyntaxQuote(form) => {
+            effect(&ast);
+            _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
+        }
+        ASTBody::UnQuote(form) => {
+            effect(&ast);
+            _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
+        }
+        ASTBody::EOF => {
+            effect(&ast);
+        }
+        ASTBody::Root(forms) => {
+            effect(&ast);
+            for form in forms {
+                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
+            }
+        }
+        ASTBody::Nil => effect(&ast),
+        ASTBody::MetaData(_) => effect(&ast),
+    };
+}
+
 pub fn visit_ast_with_analyzing<'a>(
     filename: &'a str,
     ast: &'a AST,
@@ -164,11 +167,9 @@ pub fn visit_ast_with_analyzing<'a>(
     on_analysis_end: impl FnOnce(&Analysis) -> (),
 ) {
     let mut analysis = Rc::new(RefCell::new(Analysis::new()));
-    visit_ast(filename, ast, &|ast| {
-        analyze_ns_definitions(filename, ast, analysis.clone());
-        analyze_var_definitions(filename, ast, analysis.clone());
+    _visit_ast_with_analyzing(filename, ast, &|ast| {
         effect(ast, analysis.clone());
-    });
+    }, analysis.clone());
     let result = analysis.borrow();
     on_analysis_end(result.deref());
 }
