@@ -46,6 +46,7 @@ pub enum ASTBody<'a> {
     Keyword { ns: Option<&'a str>, name: &'a str },
     NumberLiteral(NumberLiteralValue),
     StringLiteral(&'a str),
+    BoolLiteral(bool),
     Nil,
     List(Vec<AST<'a>>),
     Vector(Vec<AST<'a>>),
@@ -105,10 +106,22 @@ fn parse_number(input: Span) -> IResult<Span, AST> {
     }
 }
 
-#[derive(Debug)]
-struct StringLiteralNode<'a> {
-    pub position: Span<'a>,
-    pub text: &'a str,
+fn parse_bool(input: Span) -> IResult<Span, AST> {
+    let (s, from) = position(input)?;
+    let (s, true_or_false) = alt((tag("true"), tag("false")))(s)?;
+    let value = match *true_or_false.fragment() {
+        "true" => true,
+        "false" => false,
+        _ => unreachable!(),
+    };
+    let (s, to) = position(s)?;
+    Ok((
+        s,
+        AST {
+            pos: get_span(&input, from, to),
+            body: ASTBody::BoolLiteral(value),
+        },
+    ))
 }
 
 fn comma(s: Span) -> IResult<Span, ()> {
@@ -459,6 +472,25 @@ mod tests {
             parse_number("3.14".into()).unwrap().1.body,
             ASTBody::NumberLiteral(NumberLiteralValue::Real(3.14))
         );
+    }
+    #[test]
+    fn test_parse_boolean() {
+        unsafe {
+            assert_eq!(
+                parse_bool("true".into()).unwrap().1,
+                AST {
+                    pos: Span::new_from_raw_offset(0, 1, "true", ()),
+                    body: ASTBody::BoolLiteral(true)
+                }
+            );
+            assert_eq!(
+                parse_bool("false".into()).unwrap().1,
+                AST {
+                    pos: Span::new_from_raw_offset(0, 1, "false", ()),
+                    body: ASTBody::BoolLiteral(false)
+                }
+            );
+        }
     }
     #[test]
     fn parse_keyword_test() {
