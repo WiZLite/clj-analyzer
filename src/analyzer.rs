@@ -37,7 +37,7 @@ pub struct Analysis<'a> {
     pub context: Rc<RefCell<AnalysisContext<'a>>>,
 }
 
-impl<'a, 'temp> Analysis<'a> {
+impl<'a> Analysis<'a> {
     pub fn new() -> Self {
         Analysis {
             namespace_definitions: HashMap::new(),
@@ -113,7 +113,7 @@ pub fn visit_ast<'a>(filename: &str, ast: &'a AST<'a>, effect: &impl Fn(&'a AST)
 type AnalysisCell<'a> = Rc<RefCell<Analysis<'a>>>;
 
 #[rustfmt::skip]
-fn analyze_ns_definitions<'a, 'temp>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
+fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
     let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
     let first = if let Some(first) = forms.get(0) { first } else { return; };
     let second = if let Some(second) = forms.get(1) { second } else { return; };
@@ -135,7 +135,7 @@ fn analyze_ns_definitions<'a, 'temp>(filename: &'a str, ast: &AST<'a>, analysis:
 }
 
 #[rustfmt::skip]
-fn analyze_var_definitions<'a, 'temp>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
+fn analyze_var_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
     let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
     let first = if let Some(first) = forms.get(0) { first } else { return; };
     let second = if let Some(second) = forms.get(1) { second } else { return; };
