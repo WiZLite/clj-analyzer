@@ -3,12 +3,14 @@
 mod analyzer;
 mod parser;
 mod rules;
+use analyzer::Analysis;
 use clap::Parser;
 use nom::{
     bytes::complete::{tag, take_until},
     IResult,
 };
 use nom_locate::{position, LocatedSpan};
+use parser::AST;
 use rules::{get_syntax_rules, SyntaxRule};
 
 #[derive(clap::Subcommand)]
@@ -31,10 +33,10 @@ fn main() {
             // TODO: handle syntax error
             let (_, root) = parser::parse_source(LocatedSpan::new(&content)).unwrap();
             let syntax_rules = get_syntax_rules(edn_rs::Edn::Nil);
-            analyzer::visit_ast_with_analyzing(
-                path.to_str().unwrap(),
-                &root,
-                &|ast, _| {
+            analyzer::visit_ast_with_analyzing(analyzer::VisitArgs {
+                filename: path.to_str().unwrap(),
+                ast: &root,
+                on_visit: |ast, anlysis| {
                     for syntax_rule in &syntax_rules {
                         syntax_rule.on_visit(ast, &|target_ast, severity, message| {
                             let location = Location::from(target_ast.pos);
@@ -50,8 +52,9 @@ fn main() {
                         })
                     }
                 },
-                |_| {},
-            )
+                on_scope_end: |_, _| {},
+                on_analysis_end: |_| {},
+            })
         }
     }
 }

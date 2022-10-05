@@ -230,101 +230,77 @@ fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: Analys
 pub fn _visit_ast_with_analyzing<'a>(
     filename: &'a str,
     ast: &'a AST<'a>,
-    effect: &impl Fn(&'a AST) -> (),
-    analysis: AnalysisCell<'a>,
+    on_visit: &impl Fn(&AST, &Analysis) -> (),
+    analysis_cell: AnalysisCell<'a>,
 ) {
     match &ast.body {
-        ASTBody::Symbol { ns, name } => effect(ast),
-        ASTBody::Keyword { ns, name } => effect(&ast),
-        ASTBody::NumberLiteral(_) => effect(&ast),
-        ASTBody::StringLiteral(_) => effect(&ast),
-        ASTBody::CharLiteral(_) => effect(&ast),
-        ASTBody::BoolLiteral(_) => effect(&ast),
         ASTBody::List(forms) => {
-            analyze_ns_definitions(filename, ast, analysis.clone());
-            analyze_var_definitions(filename, ast, analysis.clone());
-            let is_scope = analyze_let_bindings(filename, ast, analysis.clone());
+            analyze_ns_definitions(filename, ast, analysis_cell.clone());
+            analyze_var_definitions(filename, ast, analysis_cell.clone());
+            let is_scope = analyze_let_bindings(filename, ast, analysis_cell.clone());
 
-            effect(&ast);
+            on_visit(ast, &analysis_cell.clone().borrow());
 
             for form in forms {
-                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
+                _visit_ast_with_analyzing(filename, form, on_visit, analysis_cell.clone())
             }
 
             dbg!((ast.fragment(), is_scope));
 
             if is_scope {
-                analysis.borrow_mut().context.borrow_mut().pop_env();
+                analysis_cell.borrow_mut().context.borrow_mut().pop_env();
             }
         }
-        ASTBody::Vector(forms) => {
-            effect(&ast);
+        ASTBody::Root(forms)
+        | ASTBody::List(forms)
+        | ASTBody::Vector(forms)
+        | ASTBody::Set(forms)
+        | ASTBody::AnonymousFn(forms) => {
+            on_visit(ast, analysis_cell.borrow().deref());
             for form in forms {
-                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
-            }
-        }
-        ASTBody::Set(forms) => {
-            effect(&ast);
-            for form in forms {
-                _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
+                _visit_ast_with_analyzing(filename, form, on_visit, analysis_cell.clone())
             }
         }
         ASTBody::Map(forms) => {
-            effect(&ast);
+            on_visit(ast, analysis_cell.borrow().deref());
             for (k, v) in forms {
-                _visit_ast_with_analyzing(filename, k, effect, analysis.clone());
-                _visit_ast_with_analyzing(filename, v, effect, analysis.clone());
+                _visit_ast_with_analyzing(filename, k, on_visit, analysis_cell.clone());
+                _visit_ast_with_analyzing(filename, v, on_visit, analysis_cell.clone());
             }
         }
-        ASTBody::AnonymousFn(forms) => {
-            effect(&ast);
-            for form in forms {
-                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
-            }
+        ASTBody::Quote(form) | ASTBody::SyntaxQuote(form) | ASTBody::UnQuote(form) => {
+            on_visit(ast, analysis_cell.borrow().deref());
+            _visit_ast_with_analyzing(filename, form, on_visit, analysis_cell.clone());
         }
-        ASTBody::Quote(form) => {
-            effect(&ast);
-            _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
+        _ => {
+            on_visit(ast, analysis_cell.borrow().deref());
         }
-        ASTBody::SyntaxQuote(form) => {
-            effect(&ast);
-            _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
-        }
-        ASTBody::UnQuote(form) => {
-            effect(&ast);
-            _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
-        }
-        ASTBody::EOF => {
-            effect(&ast);
-        }
-        ASTBody::Root(forms) => {
-            effect(&ast);
-            for form in forms {
-                _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
-            }
-        }
-        ASTBody::Nil => effect(&ast),
-        ASTBody::MetaData(_) => effect(&ast),
     };
 }
 
-pub fn visit_ast_with_analyzing<'a>(
-    filename: &'a str,
-    ast: &'a AST,
-    effect: &impl Fn(&AST, AnalysisCell) -> (),
-    on_analysis_end: impl FnOnce(&Analysis) -> (),
-) {
+pub struct VisitArgs<'a, V, S, A>
+where
+    V: Fn(&AST, &Analysis) -> (),
+    S: Fn(&AST, &Analysis) -> (),
+    A: Fn(&Analysis) -> (),
+{
+    pub filename: &'a str,
+    pub ast: &'a AST<'a>,
+    pub on_visit: V,
+    pub on_scope_end: S,
+    pub on_analysis_end: A,
+}
+
+pub fn visit_ast_with_analyzing<'a, V, S, A>(arg: VisitArgs<'a, V, S, A>)
+where
+    V: Fn(&AST, &Analysis) -> (),
+    S: Fn(&AST, &Analysis) -> (),
+    A: Fn(&Analysis) -> (),
+{
     let mut analysis = Rc::new(RefCell::new(Analysis::new()));
-    _visit_ast_with_analyzing(
-        filename,
-        ast,
-        &|ast| {
-            effect(ast, analysis.clone());
-        },
-        analysis.clone(),
-    );
+    _visit_ast_with_analyzing(arg.filename, arg.ast, &arg.on_visit, analysis.clone());
     let result = analysis.borrow();
-    on_analysis_end(result.deref());
+    (arg.on_analysis_end)(result.deref());
 }
 
 #[cfg(test)]
@@ -334,7 +310,7 @@ mod tests {
 
     use super::*;
 
-    fn do_nothing(ast: &AST, analysis: AnalysisCell) {}
+    fn do_nothing(ast: &AST, analysis: &Analysis) {}
     fn do_nothing_on_end(analysis: &Analysis) {}
 
     #[test]
@@ -345,27 +321,39 @@ mod tests {
                 .into(),
         )
         .unwrap();
-        visit_ast_with_analyzing("sample.clj".into(), &root, &do_nothing, |a| {
-            let definition = a.namespace_definitions.get("clj-analyzer.core").unwrap();
-            assert_eq!(definition.filename, "sample.clj");
-            assert_eq!(definition.name, "clj-analyzer.core");
-            assert_eq!(a.context.borrow().current_ns, "clj-analyzer.core");
-        });
+        visit_ast_with_analyzing(VisitArgs {
+            filename: "sample.clj",
+            ast: &root,
+            on_visit: do_nothing,
+            on_scope_end: do_nothing,
+            on_analysis_end: |a| {
+                let definition = a.namespace_definitions.get("clj-analyzer.core").unwrap();
+                assert_eq!(definition.filename, "sample.clj");
+                assert_eq!(definition.name, "clj-analyzer.core");
+                assert_eq!(a.context.borrow().current_ns, "clj-analyzer.core");
+            },
+        })
     }
     #[test]
     fn analyze_var_definition_test() {
         let (_, root) =
             parse_source("(ns test.core) (def a 10) (defrecord b (+ 1 2))".into()).unwrap();
-        visit_ast_with_analyzing("src/sample.clj".into(), &root, &do_nothing, |a| {
-            let a_def = a.var_definitions.get(&("test.core", "a")).unwrap();
-            assert_eq!(a_def.name, "a");
-            assert_eq!(a_def.filename, "src/sample.clj");
-            assert_eq!(a_def.defined_by, "def");
+        visit_ast_with_analyzing(VisitArgs {
+            filename: "src/sample.clj",
+            ast: &root,
+            on_visit: do_nothing,
+            on_scope_end: do_nothing,
+            on_analysis_end: |a: &Analysis| {
+                let a_def = a.var_definitions.get(&("test.core", "a")).unwrap();
+                assert_eq!(a_def.name, "a");
+                assert_eq!(a_def.filename, "src/sample.clj");
+                assert_eq!(a_def.defined_by, "def");
 
-            let b_def = a.var_definitions.get(&("test.core", "b")).unwrap();
-            assert_eq!(b_def.name, "b");
-            assert_eq!(b_def.filename, "src/sample.clj");
-            assert_eq!(b_def.defined_by, "defrecord");
+                let b_def = a.var_definitions.get(&("test.core", "b")).unwrap();
+                assert_eq!(b_def.name, "b");
+                assert_eq!(b_def.filename, "src/sample.clj");
+                assert_eq!(b_def.defined_by, "defrecord");
+            },
         });
     }
     #[test]
@@ -381,42 +369,42 @@ mod tests {
         let mut first_b_visited = RefCell::new(false);
         let mut second_b_visited = RefCell::new(false);
         let mut end_visited = RefCell::new(false);
-        visit_ast_with_analyzing(
-            "src/sample.clj",
-            &root,
-            &|ast, analysis| match ast.body {
+        visit_ast_with_analyzing(VisitArgs {
+            filename: "src/sample.clj",
+            ast: &root,
+            on_visit: |ast, analysis| match ast.body {
                 ASTBody::Symbol { ns, name: "a" } => {
                     if !*first_a_visited.borrow() {
                         *first_a_visited.borrow_mut() = true;
                         return;
                     } else {
-                        assert!(if let Some(binded) =
-                            analysis.borrow().context.borrow().find_var("a")
-                        {
-                            unsafe {
-                                assert_eq!(
-                                    binded,
-                                    Binding::Normal {
-                                        bound_by: &AST {
-                                            pos: Span::new_from_raw_offset(6, 1, "a", ()),
-                                            body: ASTBody::Symbol {
-                                                ns: None,
-                                                name: "a"
+                        assert!(
+                            if let Some(binded) = analysis.context.borrow().find_var("a") {
+                                unsafe {
+                                    assert_eq!(
+                                        binded,
+                                        Binding::Normal {
+                                            bound_by: &AST {
+                                                pos: Span::new_from_raw_offset(6, 1, "a", ()),
+                                                body: ASTBody::Symbol {
+                                                    ns: None,
+                                                    name: "a"
+                                                }
+                                            },
+                                            value: &AST {
+                                                pos: Span::new_from_raw_offset(8, 1, "1", ()),
+                                                body: ASTBody::NumberLiteral(
+                                                    NumberLiteralValue::Integer(1)
+                                                ),
                                             }
-                                        },
-                                        value: &AST {
-                                            pos: Span::new_from_raw_offset(8, 1, "1", ()),
-                                            body: ASTBody::NumberLiteral(
-                                                NumberLiteralValue::Integer(1)
-                                            ),
                                         }
-                                    }
-                                )
+                                    )
+                                }
+                                true
+                            } else {
+                                false
                             }
-                            true
-                        } else {
-                            false
-                        });
+                        );
                         *second_a_visited.borrow_mut() = true;
                     }
                 }
@@ -425,43 +413,49 @@ mod tests {
                         *first_b_visited.borrow_mut() = true;
                         return;
                     } else {
-                        assert!(if let Some(binded) =
-                            analysis.borrow().context.borrow().find_var("b")
-                        {
-                            unsafe {
-                                assert_eq!(
-                                    binded,
-                                    Binding::Normal {
-                                        bound_by: &AST {
-                                            pos: Span::new_from_raw_offset(38, 2, "b", ()),
-                                            body: ASTBody::Symbol {
-                                                ns: None,
-                                                name: "b"
+                        assert!(
+                            if let Some(binded) = analysis.context.borrow().find_var("b") {
+                                unsafe {
+                                    assert_eq!(
+                                        binded,
+                                        Binding::Normal {
+                                            bound_by: &AST {
+                                                pos: Span::new_from_raw_offset(38, 2, "b", ()),
+                                                body: ASTBody::Symbol {
+                                                    ns: None,
+                                                    name: "b"
+                                                }
+                                            },
+                                            value: &AST {
+                                                pos: Span::new_from_raw_offset(
+                                                    40,
+                                                    2,
+                                                    "\"hello\"",
+                                                    ()
+                                                ),
+                                                body: ASTBody::StringLiteral("hello"),
                                             }
-                                        },
-                                        value: &AST {
-                                            pos: Span::new_from_raw_offset(40, 2, "\"hello\"", ()),
-                                            body: ASTBody::StringLiteral("hello"),
                                         }
-                                    }
-                                )
+                                    )
+                                }
+                                true
+                            } else {
+                                false
                             }
-                            true
-                        } else {
-                            false
-                        });
+                        );
                         *second_b_visited.borrow_mut() = true;
                     }
                 }
                 ASTBody::Symbol { ns, name: "end" } => {
                     *end_visited.borrow_mut() = true;
-                    assert!(analysis.borrow().context.borrow().find_var("a").is_none());
-                    assert!(analysis.borrow().context.borrow().find_var("b").is_none());
+                    assert!(analysis.context.borrow().find_var("a").is_none());
+                    assert!(analysis.context.borrow().find_var("b").is_none());
                 }
                 _ => (),
             },
-            do_nothing_on_end,
-        );
+            on_analysis_end: do_nothing_on_end,
+            on_scope_end: do_nothing,
+        });
         assert!(*first_a_visited.borrow());
         assert!(*second_a_visited.borrow());
         assert!(*first_b_visited.borrow());
@@ -490,37 +484,37 @@ mod tests {
                     name: "values",
                 },
             };
-            visit_ast_with_analyzing(
-                "src/sample.clj",
-                &root,
-                &|ast, analysis| match ast.body {
+            visit_ast_with_analyzing(VisitArgs {
+                filename: "src/sample.clj",
+                ast: &root,
+                on_visit: |ast, analysis| match ast.body {
                     ASTBody::Symbol { ns, name: "a" } => {
                         if !*first_a_visited.borrow() {
                             *first_a_visited.borrow_mut() = true;
                             return;
                         } else {
-                            assert!(if let Some(binded) =
-                                analysis.borrow().context.borrow().find_var("a")
-                            {
-                                unsafe {
-                                    assert_eq!(
-                                        binded,
-                                        Binding::Normal {
-                                            bound_by: &AST {
-                                                pos: Span::new_from_raw_offset(16, 1, "a", ()),
-                                                body: ASTBody::Symbol {
-                                                    ns: None,
-                                                    name: "a"
-                                                }
+                            assert!(
+                                if let Some(binded) = analysis.context.borrow().find_var("a") {
+                                    unsafe {
+                                        assert_eq!(
+                                            binded,
+                                            Binding::Normal {
+                                                bound_by: &AST {
+                                                    pos: Span::new_from_raw_offset(16, 1, "a", ()),
+                                                    body: ASTBody::Symbol {
+                                                        ns: None,
+                                                        name: "a"
+                                                    }
+                                                },
+                                                value: &values_ast
                                             },
-                                            value: &values_ast
-                                        },
-                                    )
+                                        )
+                                    }
+                                    true
+                                } else {
+                                    false
                                 }
-                                true
-                            } else {
-                                false
-                            });
+                            );
                             *second_a_visited.borrow_mut() = true;
                         }
                     }
@@ -529,89 +523,90 @@ mod tests {
                             *first_b_visited.borrow_mut() = true;
                             return;
                         } else {
-                            assert!(if let Some(binded) =
-                                analysis.borrow().context.borrow().find_var("b")
-                            {
+                            assert!(
+                                if let Some(binded) = analysis.context.borrow().find_var("b") {
+                                    assert_eq!(
+                                        binded,
+                                        Binding::Destructing {
+                                            bound_to: &AST {
+                                                pos: Span::new_from_raw_offset(18, 1, "b", ()),
+                                                body: ASTBody::Symbol {
+                                                    ns: None,
+                                                    name: "b"
+                                                }
+                                            },
+                                            key: "key",
+                                            map: &values_ast
+                                        }
+                                    );
+                                    true
+                                } else {
+                                    false
+                                }
+                            );
+                            *second_b_visited.borrow_mut() = true;
+                        }
+                    }
+                    ASTBody::Symbol { ns, name: "c" } => {
+                        assert!(
+                            if let Some(binded) = analysis.context.borrow().find_var("c") {
                                 assert_eq!(
                                     binded,
                                     Binding::Destructing {
                                         bound_to: &AST {
-                                            pos: Span::new_from_raw_offset(18, 1, "b", ()),
-                                            body: ASTBody::Symbol {
+                                            pos: Span::new_from_raw_offset(32, 1, ":c", ()),
+                                            body: ASTBody::Keyword {
                                                 ns: None,
-                                                name: "b"
+                                                name: "c"
                                             }
                                         },
-                                        key: "key",
+                                        key: "c",
                                         map: &values_ast
                                     }
                                 );
                                 true
                             } else {
                                 false
-                            });
-                            *second_b_visited.borrow_mut() = true;
-                        }
-                    }
-                    ASTBody::Symbol { ns, name: "c" } => {
-                        assert!(if let Some(binded) =
-                            analysis.borrow().context.borrow().find_var("c")
-                        {
-                            assert_eq!(
-                                binded,
-                                Binding::Destructing {
-                                    bound_to: &AST {
-                                        pos: Span::new_from_raw_offset(32, 1, ":c", ()),
-                                        body: ASTBody::Keyword {
-                                            ns: None,
-                                            name: "c"
-                                        }
-                                    },
-                                    key: "c",
-                                    map: &values_ast
-                                }
-                            );
-                            true
-                        } else {
-                            false
-                        });
+                            }
+                        );
                         *c_visited.borrow_mut() = true;
                     }
                     ASTBody::Symbol { ns, name: "d" } => {
-                        assert!(if let Some(binded) =
-                            analysis.borrow().context.borrow().find_var("d")
-                        {
-                            assert_eq!(
-                                binded,
-                                Binding::Destructing {
-                                    bound_to: &AST {
-                                        pos: Span::new_from_raw_offset(35, 1, ":d", ()),
-                                        body: ASTBody::Keyword {
-                                            ns: None,
-                                            name: "d"
-                                        }
-                                    },
-                                    key: "d",
-                                    map: &values_ast
-                                }
-                            );
-                            true
-                        } else {
-                            false
-                        });
+                        assert!(
+                            if let Some(binded) = analysis.context.borrow().find_var("d") {
+                                assert_eq!(
+                                    binded,
+                                    Binding::Destructing {
+                                        bound_to: &AST {
+                                            pos: Span::new_from_raw_offset(35, 1, ":d", ()),
+                                            body: ASTBody::Keyword {
+                                                ns: None,
+                                                name: "d"
+                                            }
+                                        },
+                                        key: "d",
+                                        map: &values_ast
+                                    }
+                                );
+                                true
+                            } else {
+                                false
+                            }
+                        );
                         *d_visited.borrow_mut() = true;
                     }
                     ASTBody::Symbol { ns, name: "end" } => {
                         *end_visited.borrow_mut() = true;
-                        assert!(analysis.borrow().context.borrow().find_var("a").is_none());
-                        assert!(analysis.borrow().context.borrow().find_var("b").is_none());
-                        assert!(analysis.borrow().context.borrow().find_var("c").is_none());
-                        assert!(analysis.borrow().context.borrow().find_var("d").is_none());
+                        assert!(analysis.context.borrow().find_var("a").is_none());
+                        assert!(analysis.context.borrow().find_var("b").is_none());
+                        assert!(analysis.context.borrow().find_var("c").is_none());
+                        assert!(analysis.context.borrow().find_var("d").is_none());
                     }
                     _ => (),
                 },
-                do_nothing_on_end,
-            );
+                on_analysis_end: do_nothing_on_end,
+                on_scope_end: do_nothing,
+            });
             assert!(*first_a_visited.borrow());
             assert!(*second_a_visited.borrow());
             assert!(*first_b_visited.borrow());
