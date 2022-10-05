@@ -31,13 +31,13 @@ pub trait SyntaxRule {
 
 pub trait SemanticRule {
     fn new(config: edn_rs::Edn) -> Box<Self>;
-    fn on_scope_end(analysis: &analyzer::Analysis);
+    fn on_scope_end(&self, scope_ast: &parser::AST, analysis: &analyzer::Analysis, emit_message: &impl Fn(&parser::AST, Severity, &str) -> ());
 }
 
 pub fn get_syntax_rules(config: edn_rs::Edn) -> Vec<Box<impl SyntaxRule>> {
     vec![readable_condition::ReadableCondition::new(config)]
 }
 
-pub fn get_semantic_rules(config: edn_rs::Edn) -> Vec<Box<impl SyntaxRule>> {
-    vec![readable_condition::ReadableCondition::new(config)]
+pub fn get_semantic_rules(config: edn_rs::Edn) -> Vec<Box<impl SemanticRule>> {
+    vec![unused_local_variables::UnusedLocalVatiables::new(config)]
 }

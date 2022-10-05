@@ -1,4 +1,4 @@
-use super::SemanticRule;
+use super::{SemanticRule};
 
 pub(super) struct UnusedLocalVatiables {}
 
@@ -7,7 +7,7 @@ impl SemanticRule for UnusedLocalVatiables {
         Box::new(UnusedLocalVatiables {})
     }
 
-    fn on_scope_end(analysis: &crate::analyzer::Analysis) {
+    fn on_scope_end(&self, scope_ast: &crate::parser::AST, analysis: &crate::analyzer::Analysis, emit_message: &impl Fn(&crate::parser::AST, super::Severity, &str) -> ()) {
         todo!()
     }
 }

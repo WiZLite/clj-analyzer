@@ -231,6 +231,7 @@ pub fn _visit_ast_with_analyzing<'a>(
     filename: &'a str,
     ast: &'a AST<'a>,
     on_visit: &impl Fn(&AST, &Analysis) -> (),
+    on_scope_end: &impl Fn(&AST, &Analysis) -> (),
     analysis_cell: AnalysisCell<'a>,
 ) {
     match &ast.body {
@@ -242,7 +243,7 @@ pub fn _visit_ast_with_analyzing<'a>(
             on_visit(ast, &analysis_cell.clone().borrow());
 
             for form in forms {
-                _visit_ast_with_analyzing(filename, form, on_visit, analysis_cell.clone())
+                _visit_ast_with_analyzing(filename, form, on_visit, on_scope_end, analysis_cell.clone())
             }
 
             dbg!((ast.fragment(), is_scope));
@@ -258,19 +259,19 @@ pub fn _visit_ast_with_analyzing<'a>(
         | ASTBody::AnonymousFn(forms) => {
             on_visit(ast, analysis_cell.borrow().deref());
             for form in forms {
-                _visit_ast_with_analyzing(filename, form, on_visit, analysis_cell.clone())
+                _visit_ast_with_analyzing(filename, form, on_visit, on_scope_end, analysis_cell.clone())
             }
         }
         ASTBody::Map(forms) => {
             on_visit(ast, analysis_cell.borrow().deref());
             for (k, v) in forms {
-                _visit_ast_with_analyzing(filename, k, on_visit, analysis_cell.clone());
-                _visit_ast_with_analyzing(filename, v, on_visit, analysis_cell.clone());
+                _visit_ast_with_analyzing(filename, k, on_visit, on_scope_end, analysis_cell.clone());
+                _visit_ast_with_analyzing(filename, v, on_visit, on_scope_end, analysis_cell.clone());
             }
         }
         ASTBody::Quote(form) | ASTBody::SyntaxQuote(form) | ASTBody::UnQuote(form) => {
             on_visit(ast, analysis_cell.borrow().deref());
-            _visit_ast_with_analyzing(filename, form, on_visit, analysis_cell.clone());
+            _visit_ast_with_analyzing(filename, form, on_visit, on_scope_end, analysis_cell.clone());
         }
         _ => {
             on_visit(ast, analysis_cell.borrow().deref());
@@ -298,7 +299,7 @@ where
     A: Fn(&Analysis) -> (),
 {
     let mut analysis = Rc::new(RefCell::new(Analysis::new()));
-    _visit_ast_with_analyzing(arg.filename, arg.ast, &arg.on_visit, analysis.clone());
+    _visit_ast_with_analyzing(arg.filename, arg.ast, &arg.on_visit, &arg.on_scope_end, analysis.clone());
     let result = analysis.borrow();
     (arg.on_analysis_end)(result.deref());
 }

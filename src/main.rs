@@ -11,7 +11,7 @@ use nom::{
 };
 use nom_locate::{position, LocatedSpan};
 use parser::AST;
-use rules::{get_syntax_rules, SyntaxRule};
+use rules::{get_semantic_rules, get_syntax_rules, SemanticRule, SyntaxRule};
 
 #[derive(clap::Subcommand)]
 enum SubCommand {
@@ -33,6 +33,7 @@ fn main() {
             // TODO: handle syntax error
             let (_, root) = parser::parse_source(LocatedSpan::new(&content)).unwrap();
             let syntax_rules = get_syntax_rules(edn_rs::Edn::Nil);
+            let semantic_rules = get_semantic_rules(edn_rs::Edn::Nil);
             analyzer::visit_ast_with_analyzing(analyzer::VisitArgs {
                 filename: path.to_str().unwrap(),
                 ast: &root,
@@ -52,7 +53,25 @@ fn main() {
                         })
                     }
                 },
-                on_scope_end: |_, _| {},
+                on_scope_end: |ast, analysis| {
+                    for semantic_rule in &semantic_rules {
+                        semantic_rule.on_scope_end(
+                            ast,
+                            analysis,
+                            &|target_ast, severity, message| {
+                                let location = Location::from(target_ast.pos);
+                                println!(
+                                    "{}:{}:{}: {}: {}",
+                                    path.display(),
+                                    location.from_line,
+                                    location.from_col,
+                                    severity,
+                                    message,
+                                )
+                            },
+                        );
+                    }
+                },
                 on_analysis_end: |_| {},
             })
         }
