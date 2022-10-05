@@ -1,11 +1,12 @@
 use std::{array::IntoIter, path::Iter};
 
+use edn_rs::from_str;
 use nom::{
     branch::{alt, permutation},
     bytes::complete::{tag, take_till, take_till1, take_until},
-    character::complete::{
-        alpha1, alphanumeric1, char, digit0, digit1, line_ending, multispace0, multispace1, one_of, newline, anychar,
-    },
+    character::{complete::{
+        alpha1, alphanumeric1, char, digit0, digit1, line_ending, multispace0, multispace1, one_of, newline, hex_digit1,
+    }, is_hex_digit},
     combinator::{eof, map_res, not, opt},
     error::ParseError,
     multi::{self, count, many0, many1, separated_list0},
@@ -47,6 +48,7 @@ pub enum ASTBody<'a> {
     NumberLiteral(NumberLiteralValue),
     StringLiteral(&'a str),
     BoolLiteral(bool),
+    CharLiteral(char),
     Nil,
     List(Vec<AST<'a>>),
     Vector(Vec<AST<'a>>),
@@ -57,7 +59,8 @@ pub enum ASTBody<'a> {
     SyntaxQuote(Box<AST<'a>>),
     UnQuote(Box<AST<'a>>),
     MetaData(Vec<AST<'a>>),
-    EOF, // Not necessary but maybe useful for analysis
+    EOF,
+    // Not necessary but maybe useful for analysis
     Root(Vec<AST<'a>>),
 }
 
@@ -252,11 +255,48 @@ fn parse_string(input: Span) -> IResult<Span, AST> {
     ))
 }
 
+
 fn parse_char(input: Span) -> IResult<Span, AST> {
+    fn anychar(input: Span) -> IResult<Span, Span> {
+        let (s, from) = position(input)?;
+        let (s, char) = nom::character::complete::anychar(s)?;
+        let (s, to) = position(s)?;
+        Ok((s, get_span(&input, from, to)))
+    }
+    fn unicode(input: Span) -> IResult<Span, Span> {
+        let (s, from) = position(input)?;
+        let (s, _) = char('u')(s)?;
+        let result = hex_digit1(s);
+        let (s, hex_digit) = result?;
+        let (s, to) = position(s)?;
+        Ok((s, get_span(&input, from, to)))
+    }
     let (s, from) = position(input)?;
     let (s, _) = char('\\')(s)?;
-    let (val, _) = alt((anychar, tag("newline"), tag("space"), tag("tab"), tag("formfeed"), tag("backspace")))(s)?;
+    let (s, char_str) = alt((unicode, tag("newline"), tag("space"), tag("tab"), tag("formfeed"), tag("backspace"), anychar))(s)?;
     let (s, to) = position(s)?;
+
+    let char_value = match char_str.to_string().as_str() {
+        "newline" => '\n',
+        "space" => ' ',
+        "tab" => '\t',
+        "formfeed" => '\u{000C}',
+        "backspace" => '\u{2408}',
+        _ => {
+            if char_str.len() == 1 {
+                char_str.chars().next().unwrap()
+            } else if char_str.starts_with("u") {
+                let code = u32::from_str_radix(&char_str[1..], 16).unwrap();
+                char::from_u32(code).unwrap()
+            } else {
+                unimplemented!()
+            }
+        }
+    };
+    Ok((s, AST {
+        pos: get_span(&input, from, to),
+        body: ASTBody::CharLiteral(char_value),
+    }))
 }
 
 pub fn parse_forms(input: Span) -> IResult<Span, Vec<AST>> {
@@ -447,6 +487,7 @@ fn parse_form(s: Span) -> IResult<Span, AST> {
         parse_set,
         parse_anonymous_fn,
         parse_map,
+        parse_char,
         parse_metadata,
     ))(s)
 }
@@ -464,6 +505,7 @@ mod tests {
             ASTBody::StringLiteral("hello")
         )
     }
+
     #[test]
     fn test_parse_number() {
         unsafe {
@@ -471,7 +513,7 @@ mod tests {
                 parse_number("10".into()).unwrap().1,
                 AST {
                     pos: Span::new_from_raw_offset(0, 1, "10", ()),
-                    body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(10))
+                    body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(10)),
                 }
             );
         }
@@ -480,6 +522,7 @@ mod tests {
             ASTBody::NumberLiteral(NumberLiteralValue::Real(3.14))
         );
     }
+
     #[test]
     fn test_parse_boolean() {
         unsafe {
@@ -487,18 +530,19 @@ mod tests {
                 parse_bool("true".into()).unwrap().1,
                 AST {
                     pos: Span::new_from_raw_offset(0, 1, "true", ()),
-                    body: ASTBody::BoolLiteral(true)
+                    body: ASTBody::BoolLiteral(true),
                 }
             );
             assert_eq!(
                 parse_bool("false".into()).unwrap().1,
                 AST {
                     pos: Span::new_from_raw_offset(0, 1, "false", ()),
-                    body: ASTBody::BoolLiteral(false)
+                    body: ASTBody::BoolLiteral(false),
                 }
             );
         }
     }
+
     #[test]
     fn parse_keyword_test() {
         unsafe {
@@ -509,8 +553,8 @@ mod tests {
                     pos: Span::new_from_raw_offset(0, 1, ":key-one?", ()),
                     body: ASTBody::Keyword {
                         ns: None,
-                        name: "key-one?"
-                    }
+                        name: "key-one?",
+                    },
                 }
             );
             assert_eq!(rest.fragment(), &"  aaa");
@@ -521,8 +565,8 @@ mod tests {
                     pos: Span::new_from_raw_offset(0, 1, ":key_.2!", ()),
                     body: ASTBody::Keyword {
                         ns: None,
-                        name: "key_.2!"
-                    }
+                        name: "key_.2!",
+                    },
                 }
             );
             assert_eq!(rest.fragment(), &"\n");
@@ -531,18 +575,19 @@ mod tests {
                 parse_keyword("::hoge".into()).unwrap().1.body,
                 ASTBody::Keyword {
                     ns: Some(""),
-                    name: "hoge"
+                    name: "hoge",
                 }
             );
             assert_eq!(
                 parse_keyword("::r/get".into()).unwrap().1.body,
                 ASTBody::Keyword {
                     ns: Some("r"),
-                    name: "get"
+                    name: "get",
                 }
             );
         }
     }
+
     #[test]
     fn parse_symbol_test() {
         unsafe {
@@ -556,19 +601,20 @@ mod tests {
                     pos: Span::new_from_raw_offset(0, 1, "symbol", ()),
                     body: ASTBody::Symbol {
                         ns: None,
-                        name: "symbol"
-                    }
+                        name: "symbol",
+                    },
                 }
             );
             assert_eq!(
                 parse_symbol("ns/name".into()).unwrap().1.body,
                 ASTBody::Symbol {
                     ns: Some("ns"),
-                    name: "name"
+                    name: "name",
                 }
             );
         }
     }
+
     #[test]
     fn test_parse_forms() {
         unsafe {
@@ -578,7 +624,7 @@ mod tests {
                     Span::new_from_raw_offset(4, 1, "   ", ()),
                     AST {
                         pos: Span::new_from_raw_offset(0, 1, "[  ]", ()),
-                        body: ASTBody::Vector(vec![])
+                        body: ASTBody::Vector(vec![]),
                     }
                 )
             );
@@ -586,7 +632,7 @@ mod tests {
                 parse_vector("[ 1 ,,]".into()).unwrap().1.body,
                 ASTBody::Vector(vec![AST {
                     pos: Span::new_from_raw_offset(2, 1, "1", ()),
-                    body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
+                    body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1)),
                 }])
             );
             assert_eq!(
@@ -594,16 +640,16 @@ mod tests {
                 ASTBody::Set(vec![
                     AST {
                         pos: Span::new_from_raw_offset(2, 1, "1", ()),
-                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
+                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1)),
                     },
                     AST {
                         pos: Span::new_from_raw_offset(5, 1, "2", ()),
-                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(2))
+                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(2)),
                     },
                     AST {
                         pos: Span::new_from_raw_offset(8, 1, "3", ()),
-                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(3))
-                    }
+                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(3)),
+                    },
                 ])
             );
             assert_eq!(
@@ -611,16 +657,16 @@ mod tests {
                 ASTBody::List(vec![
                     AST {
                         pos: Span::new_from_raw_offset(1, 1, "1", ()),
-                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
+                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1)),
                     },
                     AST {
                         pos: Span::new_from_raw_offset(4, 1, "2", ()),
-                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(2))
+                        body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(2)),
                     },
                     AST {
                         pos: Span::new_from_raw_offset(8, 2, "\"hello\"", ()),
-                        body: ASTBody::StringLiteral("hello")
-                    }
+                        body: ASTBody::StringLiteral("hello"),
+                    },
                 ])
             );
             assert_eq!(
@@ -630,27 +676,28 @@ mod tests {
                         pos: Span::new_from_raw_offset(2, 1, "+", ()),
                         body: ASTBody::Symbol {
                             ns: None,
-                            name: "+"
-                        }
+                            name: "+",
+                        },
                     },
                     AST {
                         pos: Span::new_from_raw_offset(4, 1, "a", ()),
                         body: ASTBody::Symbol {
                             ns: None,
-                            name: "a"
-                        }
+                            name: "a",
+                        },
                     },
                     AST {
                         pos: Span::new_from_raw_offset(6, 1, "b", ()),
                         body: ASTBody::Symbol {
                             ns: None,
-                            name: "b"
-                        }
-                    }
+                            name: "b",
+                        },
+                    },
                 ])
             );
         }
     }
+
     #[test]
     fn parse_map_test() {
         unsafe {
@@ -662,12 +709,12 @@ mod tests {
                             pos: Span::new_from_raw_offset(2, 2, ":a", ()),
                             body: ASTBody::Keyword {
                                 ns: None,
-                                name: "a"
-                            }
+                                name: "a",
+                            },
                         },
                         AST {
                             pos: Span::new_from_raw_offset(5, 2, "1", ()),
-                            body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1))
+                            body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(1)),
                         }
                     ),
                     (
@@ -675,18 +722,19 @@ mod tests {
                             pos: Span::new_from_raw_offset(9, 3, ":b", ()),
                             body: ASTBody::Keyword {
                                 ns: None,
-                                name: "b"
-                            }
+                                name: "b",
+                            },
                         },
                         AST {
                             pos: Span::new_from_raw_offset(12, 3, "\"text\"", ()),
-                            body: ASTBody::StringLiteral("text")
+                            body: ASTBody::StringLiteral("text"),
                         }
-                    )
+                    ),
                 ])
             );
         }
     }
+
     #[test]
     fn parse_quote_test() {
         let result = parse_quote("'(+ a 1)".into()).unwrap();
@@ -700,6 +748,7 @@ mod tests {
             _ => false,
         })
     }
+
     #[test]
     fn parse_unquote_test() {
         let result = parse_unquote("~value".into()).unwrap();
@@ -713,6 +762,7 @@ mod tests {
             _ => false,
         })
     }
+
     #[test]
     fn parse_syntax_quote_test() {
         let result = parse_syntax_quote("`(+ a 1)".into()).unwrap();
@@ -726,6 +776,7 @@ mod tests {
             _ => false,
         })
     }
+
     #[test]
     fn parse_nil_test() {
         let result = parse_form("[a nil]".into()).unwrap();
@@ -739,12 +790,12 @@ mod tests {
                                 pos: Span::new_from_raw_offset(1, 1, "a", ()),
                                 body: ASTBody::Symbol {
                                     ns: None,
-                                    name: "a"
-                                }
+                                    name: "a",
+                                },
                             },
                             AST {
                                 pos: Span::new_from_raw_offset(3, 1, "nil", ()),
-                                body: ASTBody::Nil
+                                body: ASTBody::Nil,
                             },
                         ]
                     )
@@ -757,6 +808,7 @@ mod tests {
             }
         })
     }
+
     #[test]
     fn comment_test() {
         let forms = match parse_source("; comment \n (def a ;; comment \r\n 10)".into())
@@ -777,20 +829,20 @@ mod tests {
                             pos: Span::new_from_raw_offset(13, 2, "def", ()),
                             body: ASTBody::Symbol {
                                 ns: None,
-                                name: "def"
-                            }
+                                name: "def",
+                            },
                         },
                         AST {
                             pos: Span::new_from_raw_offset(17, 2, "a", ()),
                             body: ASTBody::Symbol {
                                 ns: None,
-                                name: "a"
-                            }
+                                name: "a",
+                            },
                         },
                         AST {
                             pos: Span::new_from_raw_offset(33, 3, "10", ()),
-                            body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(10))
-                        }
+                            body: ASTBody::NumberLiteral(NumberLiteralValue::Integer(10)),
+                        },
                     ]
                 );
             }
@@ -798,6 +850,7 @@ mod tests {
             assert!(false);
         }
     }
+
     #[test]
     fn parse_metadata_test() {
         let (s, meta) = parse_metadata("^:keyword ^\"string\" ^{:map 1} ^symbol ".into()).unwrap();
@@ -838,10 +891,37 @@ mod tests {
                         body: ASTBody::Symbol {
                             ns: None,
                             name: "symbol",
-                        }
-                    }
+                        },
+                    },
                 ]),
             )
         }
+    }
+
+    #[test]
+    fn parse_char_test() {
+        let (s, ast) = parse_char("\\a ".into()).unwrap();
+        if let ASTBody::CharLiteral(c) = ast.body {
+            assert_eq!(c, 'a')
+        } else {
+            unreachable!()
+        }
+        assert_eq!(&s.to_string(), " ");
+
+        let (s, ast) = parse_char("\\space ".into()).unwrap();
+        if let ASTBody::CharLiteral(c) = ast.body {
+            assert_eq!(c, ' ')
+        } else {
+            unreachable!()
+        }
+        assert_eq!(&s.to_string(), " ");
+
+        let (s, ast) = parse_char("\\u1234 ".into()).unwrap();
+        if let ASTBody::CharLiteral(c) = ast.body {
+            assert_eq!(c, 'ሴ')
+        } else {
+            unreachable!()
+        }
+        assert_eq!(&s.to_string(), " ");
     }
 }

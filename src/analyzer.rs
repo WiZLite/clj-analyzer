@@ -238,6 +238,7 @@ pub fn _visit_ast_with_analyzing<'a>(
         ASTBody::Keyword { ns, name } => effect(&ast),
         ASTBody::NumberLiteral(_) => effect(&ast),
         ASTBody::StringLiteral(_) => effect(&ast),
+        ASTBody::CharLiteral(_) => effect(&ast),
         ASTBody::BoolLiteral(_) => effect(&ast),
         ASTBody::List(forms) => {
             analyze_ns_definitions(filename, ast, analysis.clone());
