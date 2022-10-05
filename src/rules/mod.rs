@@ -7,35 +7,27 @@ use crate::{
 mod readable_condition;
 use edn_rs;
 
-pub enum LintLevel {
+pub enum Severity {
     Info,
     Warning,
     Error,
 }
 
-pub struct LintMessage {
-    pub level: LintLevel,
-    pub message: String,
-    pub location: Location,
-}
-
-impl Display for LintLevel {
+impl Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LintLevel::Info => write!(f, "info"),
-            LintLevel::Warning => write!(f, "warning"),
-            LintLevel::Error => write!(f, "error"),
+            Severity::Info => write!(f, "info"),
+            Severity::Warning => write!(f, "warning"),
+            Severity::Error => write!(f, "error"),
         }
     }
 }
 
-pub trait LintRule {
-    fn rule_name() -> String;
+pub trait SyntaxRule {
     fn new(config: edn_rs::Edn) -> Box<Self>;
-    fn predicate(&self, ast: &parser::AST) -> bool;
-    fn get_message(&self, ast: &parser::AST) -> LintMessage;
+    fn on_visit(&self, ast: &parser::AST, emit_message: &impl Fn(&parser::AST, Severity, &str) -> ());
 }
 
-pub fn get_rules(config: edn_rs::Edn) -> Vec<Box<impl LintRule>> {
+pub fn get_syntax_rules(config: edn_rs::Edn) -> Vec<Box<impl SyntaxRule>> {
     vec![readable_condition::ReadableCondition::new(config)]
 }

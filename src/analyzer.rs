@@ -245,8 +245,6 @@ pub fn _visit_ast_with_analyzing<'a>(
             analyze_var_definitions(filename, ast, analysis.clone());
             let is_scope = analyze_let_bindings(filename, ast, analysis.clone());
 
-            dbg!((ast.fragment(), is_scope));
-
             effect(&ast);
 
             for form in forms {
@@ -256,7 +254,6 @@ pub fn _visit_ast_with_analyzing<'a>(
             dbg!((ast.fragment(), is_scope));
 
             if is_scope {
-                dbg!("popping");
                 analysis.borrow_mut().context.borrow_mut().pop_env();
             }
         }

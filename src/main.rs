@@ -9,7 +9,7 @@ use nom::{
     IResult,
 };
 use nom_locate::{position, LocatedSpan};
-use rules::{get_rules, LintRule};
+use rules::{get_syntax_rules, SyntaxRule};
 
 #[derive(clap::Subcommand)]
 enum SubCommand {
@@ -30,23 +30,24 @@ fn main() {
             let content = std::fs::read_to_string(path).expect("could not read file");
             // TODO: handle syntax error
             let (_, root) = parser::parse_source(LocatedSpan::new(&content)).unwrap();
-            let rules = get_rules(edn_rs::Edn::Nil);
+            let syntax_rules = get_syntax_rules(edn_rs::Edn::Nil);
             analyzer::visit_ast_with_analyzing(
                 path.to_str().unwrap(),
                 &root,
                 &|ast, _| {
-                    for rule in &rules {
-                        if rule.predicate(ast) {
-                            let message = rule.get_message(ast);
+                    for syntax_rule in &syntax_rules {
+                        syntax_rule.on_visit(ast, &|target_ast, severity, message| {
+                            let location = Location::from(target_ast.pos);
+
                             println!(
                                 "{}:{}:{}: {}: {}",
                                 path.display(),
-                                message.location.from_line,
-                                message.location.from_col,
-                                message.level,
-                                message.message,
+                                location.from_line,
+                                location.from_col,
+                                severity,
+                                message,
                             )
-                        }
+                        })
                     }
                 },
                 |_| {},
