@@ -23,6 +23,26 @@ use self::analysis::BindingKind;
 use self::analysis::NamespaceDef;
 
 #[rustfmt::skip]
+fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
+    let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
+    let first = if let Some(first) = forms.get(0) { first } else { return; };
+    let second = if let Some(second) = forms.get(1) { second } else { return; };
+    if let ASTBody::Symbol { ns, name: "ns" } = first.body {
+        if let ASTBody::Symbol { ns, name: ns_name } = second.body {
+            analysis.borrow_mut().namespace_definitions.insert(
+                ns_name,
+                NamespaceDef {
+                    location: second.pos.into(),
+                    name: ns_name,
+                    filename,
+                },
+            );
+            analysis.borrow_mut().ctx_in_ns(ns_name);
+        }
+    }
+}
+
+#[rustfmt::skip]
 fn analyze_var_definitions<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) {
     let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
     let first = if let Some(first) = forms.get(0) { first } else { return; };
@@ -167,26 +187,6 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
         }
     }
     true
-}
-
-#[rustfmt::skip]
-fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: AnalysisCell<'a>) {
-    let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return; };
-    let first = if let Some(first) = forms.get(0) { first } else { return; };
-    let second = if let Some(second) = forms.get(1) { second } else { return; };
-    if let ASTBody::Symbol { ns, name: "ns" } = first.body {
-        if let ASTBody::Symbol { ns, name: ns_name } = second.body {
-            analysis.borrow_mut().namespace_definitions.insert(
-                ns_name,
-                NamespaceDef {
-                    location: second.pos.into(),
-                    name: ns_name,
-                    filename,
-                },
-            );
-            analysis.borrow_mut().ctx_in_ns(ns_name);
-        }
-    }
 }
 
 pub fn _visit_ast_with_analyzing<'a>(
