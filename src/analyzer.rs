@@ -32,7 +32,7 @@ pub struct Binding<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BindingKind<'a> {
     Normal { value: &'a AST<'a> },
-    Destructing { key: &'a str, map: &'a AST<'a> },
+    Destructing { key: &'a AST<'a>, map: &'a AST<'a> },
 }
 
 impl<'a> std::hash::Hash for Binding<'a> {
@@ -180,22 +180,17 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                             match k.body {
                                 // ex) [{binded_symbol :key} values]
                                 ASTBody::Symbol { ns, name: bind_name } => {
-                                    if let ASTBody::Keyword { ns, name: key } = v.body {
-                                        let binding = Binding {
-                                            filename,
-                                            defined_by,
-                                            name: bind_name,
-                                            namespace: current_ns,
-                                            is_private: true,
-                                            bound_to: k,
-                                            kind: BindingKind::Destructing { key, map: &binding[1] }
-                                        };
-                                        analysis.borrow_mut().bindings.insert(binding);
-                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, binding);
-                                    } else {
-                                        println!("{}, Syntax error. Expect keyword but found {}", v.pos, v.fragment());
-                                        return false;
-                                    }
+                                    let binding = Binding {
+                                        filename,
+                                        defined_by,
+                                        name: bind_name,
+                                        namespace: current_ns,
+                                        is_private: true,
+                                        bound_to: k,
+                                        kind: BindingKind::Destructing { key: v, map: &binding[1] }
+                                    };
+                                    analysis.borrow_mut().bindings.insert(binding);
+                                    analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, binding);
                                 },
                                 // ex) [{:keys [:a :b :c]} values]
                                 ASTBody::Keyword { ns, name: "keys" } => {
@@ -209,7 +204,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                                     namespace: current_ns,
                                                     is_private: true,
                                                     bound_to: key,
-                                                    kind: BindingKind::Destructing { key: bind_name, map: &binding[1] }
+                                                    kind: BindingKind::Destructing { key, map: &binding[1] }
                                                 };
                                                 analysis.borrow_mut().bindings.insert(binding);
                                                 analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, binding);
@@ -306,8 +301,6 @@ pub fn _visit_ast_with_analyzing<'a>(
             }
 
             if is_scope {
-                println!("below should be scope");
-                dbg!(ast);
                 analysis_cell.borrow_mut().context.borrow_mut().pop_env();
             }
         }
@@ -509,7 +502,6 @@ mod tests {
                         *first_b_visited.borrow_mut() = true;
                         return;
                     } else {
-                        dbg!(&analysis.context.borrow());
                         if let Some(binded) = analysis.context.borrow().find_var("b") {
                             assert_eq!(binded.name, "b");
                             assert_eq!(binded.defined_by, "let");
@@ -583,7 +575,12 @@ mod tests {
                                 assert_eq!(binded.name, "a");
                                 assert_eq!(binded.defined_by, "when-let");
                                 if let BindingKind::Destructing { key, map } = binded.kind {
-                                    assert_eq!(key, "a");
+                                    if let ASTBody::Symbol { ns, name } = key.body {
+                                        assert_eq!(name, "a");
+                                    } else {
+                                        println!("a should be destructed by symbol 'a'");
+                                        assert!(false);
+                                    }
                                     if let ASTBody::Symbol { ns, name } = map.body {
                                         assert_eq!(name, "values");
                                     } else {
@@ -610,7 +607,12 @@ mod tests {
                                 assert_eq!(binded.name, "b");
                                 assert_eq!(binded.defined_by, "when-let");
                                 if let BindingKind::Destructing { key, map } = binded.kind {
-                                    assert_eq!(key, "key");
+                                    if let ASTBody::Keyword { ns, name } = key.body {
+                                        assert_eq!(name, "key");
+                                    } else {
+                                        println!("b should be destructed by keyword ':key'");
+                                        assert!(false);
+                                    }
                                     if let ASTBody::Symbol { ns, name } = map.body {
                                         assert_eq!(name, "values");
                                     } else {
@@ -633,7 +635,12 @@ mod tests {
                             assert_eq!(binded.name, "c");
                             assert_eq!(binded.defined_by, "when-let");
                             if let BindingKind::Destructing { key, map } = binded.kind {
-                                assert_eq!(key, "c");
+                                if let ASTBody::Keyword { ns, name } = key.body {
+                                    assert_eq!(name, "c");
+                                } else {
+                                    println!("c should be destructed by keyword ':c'");
+                                    assert!(false);
+                                }
                                 if let ASTBody::Symbol { ns, name } = map.body {
                                     assert_eq!(name, "values");
                                 } else {
@@ -655,7 +662,12 @@ mod tests {
                             assert_eq!(binded.name, "d");
                             assert_eq!(binded.defined_by, "when-let");
                             if let BindingKind::Destructing { key, map } = binded.kind {
-                                assert_eq!(key, "d");
+                                if let ASTBody::Keyword { ns, name } = key.body {
+                                    assert_eq!(name, "d");
+                                } else {
+                                    println!("d should be destructed by keyword ':d'");
+                                    assert!(false);
+                                }
                                 if let ASTBody::Symbol { ns, name } = map.body {
                                     assert_eq!(name, "values");
                                 } else {
