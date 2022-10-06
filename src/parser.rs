@@ -4,9 +4,13 @@ use edn_rs::from_str;
 use nom::{
     branch::{alt, permutation},
     bytes::complete::{tag, take_till, take_till1, take_until},
-    character::{complete::{
-        alpha1, alphanumeric1, char, digit0, digit1, line_ending, multispace0, multispace1, one_of, newline, hex_digit1,
-    }, is_hex_digit},
+    character::{
+        complete::{
+            alpha1, alphanumeric1, char, digit0, digit1, hex_digit1, line_ending, multispace0,
+            multispace1, newline, one_of,
+        },
+        is_hex_digit,
+    },
     combinator::{eof, map_res, not, opt},
     error::ParseError,
     multi::{self, count, many0, many1, separated_list0},
@@ -255,7 +259,6 @@ fn parse_string(input: Span) -> IResult<Span, AST> {
     ))
 }
 
-
 fn parse_char(input: Span) -> IResult<Span, AST> {
     fn anychar(input: Span) -> IResult<Span, Span> {
         let (s, from) = position(input)?;
@@ -273,7 +276,15 @@ fn parse_char(input: Span) -> IResult<Span, AST> {
     }
     let (s, from) = position(input)?;
     let (s, _) = char('\\')(s)?;
-    let (s, char_str) = alt((unicode, tag("newline"), tag("space"), tag("tab"), tag("formfeed"), tag("backspace"), anychar))(s)?;
+    let (s, char_str) = alt((
+        unicode,
+        tag("newline"),
+        tag("space"),
+        tag("tab"),
+        tag("formfeed"),
+        tag("backspace"),
+        anychar,
+    ))(s)?;
     let (s, to) = position(s)?;
 
     let char_value = match char_str.to_string().as_str() {
@@ -293,10 +304,13 @@ fn parse_char(input: Span) -> IResult<Span, AST> {
             }
         }
     };
-    Ok((s, AST {
-        pos: get_span(&input, from, to),
-        body: ASTBody::CharLiteral(char_value),
-    }))
+    Ok((
+        s,
+        AST {
+            pos: get_span(&input, from, to),
+            body: ASTBody::CharLiteral(char_value),
+        },
+    ))
 }
 
 pub fn parse_forms(input: Span) -> IResult<Span, Vec<AST>> {

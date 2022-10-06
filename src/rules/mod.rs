@@ -1,8 +1,9 @@
 use std::fmt::Display;
 
 use crate::{
+    analyzer,
     parser::{self, ASTBody},
-    Location, Span, analyzer,
+    Location, Span,
 };
 mod readable_condition;
 mod unused_local_variables;
@@ -26,12 +27,21 @@ impl Display for Severity {
 
 pub trait SyntaxRule {
     fn new(config: edn_rs::Edn) -> Box<Self>;
-    fn on_visit(&self, ast: &parser::AST, emit_message: &impl Fn(&parser::AST, Severity, &str) -> ());
+    fn on_visit(
+        &self,
+        ast: &parser::AST,
+        emit_message: &impl Fn(&parser::AST, Severity, &str) -> (),
+    );
 }
 
 pub trait SemanticRule {
     fn new(config: edn_rs::Edn) -> Box<Self>;
-    fn on_scope_end(&self, scope_ast: &parser::AST, analysis: &analyzer::Analysis, emit_message: &impl Fn(&parser::AST, Severity, &str) -> ());
+    fn on_scope_end(
+        &self,
+        scope_ast: &parser::AST,
+        analysis: &analyzer::Analysis,
+        emit_message: &impl Fn(&parser::AST, Severity, &str) -> (),
+    );
 }
 
 pub fn get_syntax_rules(config: edn_rs::Edn) -> Vec<Box<impl SyntaxRule>> {
