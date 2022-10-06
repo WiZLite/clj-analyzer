@@ -1,3 +1,6 @@
+mod analysis;
+mod syntax_error;
+
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::collections::HashMap;
@@ -12,12 +15,12 @@ use crate::Location;
 use crate::Span;
 
 pub use self::analysis::Analysis;
+pub use self::syntax_error::SyntaxError;
+
 use self::analysis::AnalysisCell;
 use self::analysis::Binding;
 use self::analysis::BindingKind;
 use self::analysis::NamespaceDef;
-
-mod analysis;
 
 #[rustfmt::skip]
 fn analyze_var_definitions<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) {
@@ -250,8 +253,24 @@ pub fn _visit_ast_with_analyzing<'a>(
                 );
             }
         }
-        ASTBody::Quote(form) | ASTBody::SyntaxQuote(form) | ASTBody::UnQuote(form) => {
+        ASTBody::Quote(form) | ASTBody::SyntaxQuote(form) => {
             on_visit(ast, analysis_cell.borrow().deref());
+            analysis_cell.borrow_mut().ctx_quote();
+            _visit_ast_with_analyzing(
+                filename,
+                form,
+                on_visit,
+                on_scope_end,
+                analysis_cell.clone(),
+            );
+        }
+        ASTBody::UnQuote(form) => {
+            on_visit(ast, analysis_cell.borrow().deref());
+            if analysis_cell.borrow_mut().ctx_unquote().is_err() {
+                // TODO: propagate syntax error
+                println!("Syntax error! Too many unquotes");
+                return;
+            }
             _visit_ast_with_analyzing(
                 filename,
                 form,
@@ -614,5 +633,8 @@ mod tests {
             assert!(*d_visited.borrow());
             assert!(*end_visited.borrow());
         }
+    }
+    fn test_quote() {
+        let source = "`(a ~b 'c)";
     }
 }

@@ -8,6 +8,8 @@ use std::{
 
 use crate::{parser::AST, Span};
 
+use super::SyntaxError;
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct NamespaceDef<'a> {
     pub location: Span<'a>,
@@ -54,6 +56,7 @@ pub enum Variable {}
 pub struct AnalysisContext<'a> {
     current_ns: &'a str,
     env: Vec<HashMap<&'a str, Binding<'a>>>,
+    quoted_count: u16
 }
 
 #[derive(Debug)]
@@ -73,6 +76,7 @@ impl<'a> Analysis<'a> {
             context: Rc::new(RefCell::new(AnalysisContext {
                 current_ns: "",
                 env: Vec::new(),
+                quoted_count: 0
             })),
         }
     }
@@ -95,6 +99,21 @@ impl<'a> Analysis<'a> {
         if let Some(scope) = self.context.deref().borrow_mut().env.last_mut() {
             scope.insert(name, binding);
         }
+    }
+    pub(super) fn ctx_quote(&mut self) -> u16 {
+        self.context.clone().deref().borrow_mut().quoted_count += 1;
+        self.context.deref().borrow().quoted_count
+    }
+    // Fails if quoted_count is 0
+    pub(super) fn ctx_unquote(&mut self) -> Result<u16, SyntaxError> {
+        if self.context.deref().borrow().quoted_count == 0 {
+            return Err(SyntaxError { message: "Too many unquotes".to_string() } )
+        }
+        self.context.clone().deref().borrow_mut().quoted_count -= 1;
+        Ok(self.context.deref().borrow().quoted_count)
+    }
+    pub(super) fn ctx_get_quoted(&self) -> bool {
+        self.context.deref().borrow().quoted_count > 0
     }
     pub(crate) fn ctx_find_var(&self, name: &str) -> Option<Binding> {
         self.context
