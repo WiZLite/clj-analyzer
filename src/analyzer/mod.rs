@@ -11,102 +11,13 @@ use crate::parser::AST;
 use crate::Location;
 use crate::Span;
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct NamespaceDef<'a> {
-    location: Span<'a>,
-    name: &'a str,
-    filename: &'a str,
-}
+pub use self::analysis::Analysis;
+use self::analysis::AnalysisCell;
+use self::analysis::Binding;
+use self::analysis::BindingKind;
+use self::analysis::NamespaceDef;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Binding<'a> {
-    namespace: &'a str,
-    name: &'a str,
-    filename: &'a str,
-    defined_by: &'a str,
-    is_private: bool,
-    bound_to: &'a AST<'a>,
-    kind: BindingKind<'a>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum BindingKind<'a> {
-    Normal { value: &'a AST<'a> },
-    Destructing { key: &'a AST<'a>, map: &'a AST<'a> },
-}
-
-impl<'a> std::hash::Hash for Binding<'a> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.namespace.hash(state);
-        self.name.hash(state);
-        self.bound_to.pos.hash(state);
-    }
-}
-
-impl<'a> std::cmp::PartialEq for Binding<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.filename == other.filename && self.bound_to.pos == other.bound_to.pos
-    }
-}
-
-impl<'a> std::cmp::Eq for Binding<'a> {}
-
-pub enum Variable {}
-
-#[derive(Debug)]
-pub struct AnalysisContext<'a> {
-    current_ns: &'a str,
-    env: Vec<HashMap<&'a str, Binding<'a>>>,
-}
-
-impl<'a> AnalysisContext<'a> {
-    pub fn in_ns(&mut self, ns: &'a str) {
-        self.current_ns = ns;
-    }
-    pub fn pop_env(&mut self) {
-        self.env.pop();
-    }
-    pub fn push_env(&mut self, scope_env: HashMap<&'a str, Binding<'a>>) {
-        self.env.push(scope_env);
-    }
-    pub fn bind_var(&mut self, name: &'a str, binding: Binding<'a>) {
-        if let Some(scope) = self.env.last_mut() {
-            scope.insert(name, binding);
-        }
-    }
-    pub fn find_var(&self, name: &str) -> Option<Binding> {
-        self.env
-            .iter()
-            .rev()
-            .map(|scope| scope.get(name).map_or(None, |x| Some(*x)))
-            .find(|x| x.is_some())
-            .unwrap_or(None)
-    }
-}
-
-#[derive(Debug)]
-pub struct Analysis<'a> {
-    pub namespace_definitions: HashMap<&'a str, NamespaceDef<'a>>,
-    pub bindings: HashSet<Binding<'a>>,
-    pub usages: HashMap<&'a AST<'a>, Binding<'a>>,
-    pub context: Rc<RefCell<AnalysisContext<'a>>>,
-}
-
-impl<'a> Analysis<'a> {
-    pub fn new() -> Self {
-        Analysis {
-            namespace_definitions: HashMap::new(),
-            bindings: HashSet::new(),
-            usages: HashMap::new(),
-            context: Rc::new(RefCell::new(AnalysisContext {
-                current_ns: "",
-                env: Vec::new(),
-            })),
-        }
-    }
-}
-
-type AnalysisCell<'a> = Rc<RefCell<Analysis<'a>>>;
+mod analysis;
 
 #[rustfmt::skip]
 fn analyze_var_definitions<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) {
@@ -114,7 +25,7 @@ fn analyze_var_definitions<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: An
     let first = if let Some(first) = forms.get(0) { first } else { return; };
     let second = if let Some(second) = forms.get(1) { second } else { return; };
     let third = if let Some(third) = forms.get(2) { third } else { return; };
-    let current_ns = analysis.borrow().context.borrow().current_ns;
+    let current_ns = analysis.borrow().ctx_get_current_ns();
     if let ASTBody::Symbol { ns, name: defined_by } = first.body {
         // TODO: make configurable
         if !defined_by.starts_with("def") { return; }
@@ -138,7 +49,7 @@ fn analyze_var_definitions<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: An
 // TODO: handle syntax errors.
 #[rustfmt::skip]
 fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) -> bool {
-    let current_ns = analysis.borrow().context.borrow().current_ns;
+    let current_ns = analysis.borrow().ctx_get_current_ns();
     let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return false; };
     let first = if let Some(first) = forms.get(0) { first } else { return false; };
     let second = if let Some(second) = forms.get(1) { second } else { return false; };
@@ -153,7 +64,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
             }
     
             let new_scope = HashMap::new();
-            analysis.borrow_mut().context.borrow_mut().push_env(new_scope);
+            analysis.borrow_mut().ctx_push_env(new_scope);
 
             for binding in forms.chunks(2) {
                 match &binding[0].body {
@@ -172,7 +83,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                 kind: BindingKind::Normal { value: &binding[1] }
                             };
                             analysis.borrow_mut().bindings.insert(binding);
-                            analysis.borrow_mut().context.borrow_mut().bind_var(name, binding);
+                            analysis.borrow_mut().ctx_bind_var(name, binding);
                         }
                     },
                     ASTBody::Map(kvs) => {
@@ -190,7 +101,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                         kind: BindingKind::Destructing { key: v, map: &binding[1] }
                                     };
                                     analysis.borrow_mut().bindings.insert(binding);
-                                    analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, binding);
+                                    analysis.borrow_mut().ctx_bind_var(bind_name, binding);
                                 },
                                 // ex) [{:keys [:a :b :c]} values]
                                 ASTBody::Keyword { ns, name: "keys" } => {
@@ -207,7 +118,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                                     kind: BindingKind::Destructing { key, map: &binding[1] }
                                                 };
                                                 analysis.borrow_mut().bindings.insert(binding);
-                                                analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, binding);
+                                                analysis.borrow_mut().ctx_bind_var(bind_name, binding);
                                             } else {
                                                 println!("{} Syntax error. Expect keyword but found {}",key.pos, key.fragment());
                                                 return false;
@@ -231,7 +142,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                                             kind: BindingKind::Normal { value: &binding[1] }
                                         };
                                         analysis.borrow_mut().bindings.insert(binding);
-                                        analysis.borrow_mut().context.borrow_mut().bind_var(bind_name, binding);
+                                        analysis.borrow_mut().ctx_bind_var(bind_name, binding);
                                     } else {
                                         println!("{} Syntax error. Expect keyword but found {}", v.pos, v.fragment());
                                         return false;
@@ -270,7 +181,7 @@ fn analyze_ns_definitions<'a>(filename: &'a str, ast: &AST<'a>, analysis: Analys
                     filename,
                 },
             );
-            analysis.borrow_mut().context.borrow_mut().in_ns(ns_name);
+            analysis.borrow_mut().ctx_in_ns(ns_name);
         }
     }
 }
@@ -301,7 +212,7 @@ pub fn _visit_ast_with_analyzing<'a>(
             }
 
             if is_scope {
-                analysis_cell.borrow_mut().context.borrow_mut().pop_env();
+                analysis_cell.borrow_mut().ctx_pop_env();
             }
         }
         ASTBody::Root(forms)
@@ -414,7 +325,7 @@ mod tests {
                 let definition = a.namespace_definitions.get("clj-analyzer.core").unwrap();
                 assert_eq!(definition.filename, "sample.clj");
                 assert_eq!(definition.name, "clj-analyzer.core");
-                assert_eq!(a.context.borrow().current_ns, "clj-analyzer.core");
+                assert_eq!(a.ctx_get_current_ns(), "clj-analyzer.core");
             },
         })
     }
@@ -476,7 +387,7 @@ mod tests {
                         *first_a_visited.borrow_mut() = true;
                         return;
                     } else {
-                        if let Some(binded) = analysis.context.borrow().find_var("a") {
+                        if let Some(binded) = analysis.ctx_find_var("a") {
                             assert_eq!(binded.name, "a");
                             assert_eq!(binded.defined_by, "let");
                             if let BindingKind::Normal { value } = binded.kind {
@@ -502,7 +413,7 @@ mod tests {
                         *first_b_visited.borrow_mut() = true;
                         return;
                     } else {
-                        if let Some(binded) = analysis.context.borrow().find_var("b") {
+                        if let Some(binded) = analysis.ctx_find_var("b") {
                             assert_eq!(binded.name, "b");
                             assert_eq!(binded.defined_by, "let");
                             if let BindingKind::Normal { value } = binded.kind {
@@ -525,8 +436,8 @@ mod tests {
                 }
                 ASTBody::Symbol { ns, name: "end" } => {
                     *end_visited.borrow_mut() = true;
-                    assert!(analysis.context.borrow().find_var("a").is_none());
-                    assert!(analysis.context.borrow().find_var("b").is_none());
+                    assert!(analysis.ctx_find_var("a").is_none());
+                    assert!(analysis.ctx_find_var("b").is_none());
                 }
                 _ => (),
             },
@@ -570,7 +481,7 @@ mod tests {
                             *first_a_visited.borrow_mut() = true;
                             return;
                         } else {
-                            if let Some(binded) = analysis.context.borrow().find_var("a") {
+                            if let Some(binded) = analysis.ctx_find_var("a") {
                                 assert!(binded.is_private);
                                 assert_eq!(binded.name, "a");
                                 assert_eq!(binded.defined_by, "when-let");
@@ -602,7 +513,7 @@ mod tests {
                             *first_b_visited.borrow_mut() = true;
                             return;
                         } else {
-                            if let Some(binded) = analysis.context.borrow().find_var("b") {
+                            if let Some(binded) = analysis.ctx_find_var("b") {
                                 assert!(binded.is_private);
                                 assert_eq!(binded.name, "b");
                                 assert_eq!(binded.defined_by, "when-let");
@@ -630,7 +541,7 @@ mod tests {
                         }
                     }
                     ASTBody::Symbol { ns, name: "c" } => {
-                        if let Some(binded) = analysis.context.borrow().find_var("c") {
+                        if let Some(binded) = analysis.ctx_find_var("c") {
                             assert!(binded.is_private);
                             assert_eq!(binded.name, "c");
                             assert_eq!(binded.defined_by, "when-let");
@@ -657,7 +568,7 @@ mod tests {
                         *c_visited.borrow_mut() = true;
                     }
                     ASTBody::Symbol { ns, name: "d" } => {
-                        if let Some(binded) = analysis.context.borrow().find_var("d") {
+                        if let Some(binded) = analysis.ctx_find_var("d") {
                             assert!(binded.is_private);
                             assert_eq!(binded.name, "d");
                             assert_eq!(binded.defined_by, "when-let");
@@ -685,10 +596,10 @@ mod tests {
                     }
                     ASTBody::Symbol { ns, name: "end" } => {
                         *end_visited.borrow_mut() = true;
-                        assert!(analysis.context.borrow().find_var("a").is_none());
-                        assert!(analysis.context.borrow().find_var("b").is_none());
-                        assert!(analysis.context.borrow().find_var("c").is_none());
-                        assert!(analysis.context.borrow().find_var("d").is_none());
+                        assert!(analysis.ctx_find_var("a").is_none());
+                        assert!(analysis.ctx_find_var("b").is_none());
+                        assert!(analysis.ctx_find_var("c").is_none());
+                        assert!(analysis.ctx_find_var("d").is_none());
                     }
                     _ => (),
                 },
