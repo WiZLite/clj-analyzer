@@ -506,6 +506,9 @@ fn parse_form(s: Span) -> IResult<Span, AST> {
         parse_map,
         parse_char,
         parse_metadata,
+        parse_quote,
+        parse_unquote,
+        parse_syntax_quote
     ))(s)
 }
 

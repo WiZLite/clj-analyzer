@@ -634,7 +634,44 @@ mod tests {
             assert!(*end_visited.borrow());
         }
     }
+    #[test]
     fn test_quote() {
-        let source = "`(a ~b 'c)";
+        let source = "`(a ~b) 'c";
+        let (_, root) = parse_source(source.into()).unwrap();
+        let a_visited = RefCell::new(false);
+        let b_visited = RefCell::new(false);
+        let c_visited = RefCell::new(false);
+        visit_ast_with_analyzing(VisitArgs {
+            filename: "src/test_quote.clj",
+            ast: &root,
+            on_visit: |ast, analysis| {
+                dbg!(&ast);
+                match &ast.body {
+                    ASTBody::Symbol { ns, name } => {
+                        match *name {
+                            "a" => {
+                                *a_visited.borrow_mut() = true;
+                                assert!(analysis.ctx_get_quoted());
+                            },
+                            "b" => {
+                                *b_visited.borrow_mut() = true;
+                                assert!(!analysis.ctx_get_quoted())
+                            },
+                            "c" => {
+                                *c_visited.borrow_mut() = true;
+                                assert!(analysis.ctx_get_quoted())
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            on_scope_end: do_nothing,
+            on_analysis_end: do_nothing_on_end,
+        });
+        assert!(*a_visited.borrow());
+        assert!(*b_visited.borrow());
+        assert!(*c_visited.borrow());
     }
 }
