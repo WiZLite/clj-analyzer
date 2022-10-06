@@ -419,6 +419,7 @@ fn parse_map(input: Span) -> IResult<Span, AST> {
 fn parse_quote(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, _) = char('\'')(s)?;
+    let (s, _) = skip0(s)?;
     let (s, form) = parse_form(s)?;
     let (s, to) = position(s)?;
     Ok((
@@ -433,6 +434,7 @@ fn parse_quote(input: Span) -> IResult<Span, AST> {
 fn parse_unquote(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, _) = char('~')(s)?;
+    let (s, _) = skip0(s)?;
     let (s, form) = parse_form(s)?;
     let (s, to) = position(s)?;
     Ok((
@@ -447,6 +449,7 @@ fn parse_unquote(input: Span) -> IResult<Span, AST> {
 fn parse_syntax_quote(input: Span) -> IResult<Span, AST> {
     let (s, from) = position(input)?;
     let (s, _) = char('`')(s)?;
+    let (s, _) = skip0(s)?;
     let (s, form) = parse_form(s)?;
     let (s, to) = position(s)?;
     Ok((
@@ -751,7 +754,7 @@ mod tests {
 
     #[test]
     fn parse_quote_test() {
-        let result = parse_quote("'(+ a 1)".into()).unwrap();
+        let result = parse_quote("' (+ a 1)".into()).unwrap();
         assert!(match result.1.body {
             ASTBody::Quote(quoted_form) => {
                 match quoted_form.body {
@@ -765,7 +768,7 @@ mod tests {
 
     #[test]
     fn parse_unquote_test() {
-        let result = parse_unquote("~value".into()).unwrap();
+        let result = parse_unquote("~  value".into()).unwrap();
         assert!(match result.1.body {
             ASTBody::UnQuote(quoted_form) => {
                 match quoted_form.body {
@@ -779,7 +782,7 @@ mod tests {
 
     #[test]
     fn parse_syntax_quote_test() {
-        let result = parse_syntax_quote("`(+ a 1)".into()).unwrap();
+        let result = parse_syntax_quote("`    (+ a 1)".into()).unwrap();
         assert!(match result.1.body {
             ASTBody::SyntaxQuote(quoted_form) => {
                 match quoted_form.body {
