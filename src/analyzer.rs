@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::rc::Rc;
@@ -74,6 +75,7 @@ pub struct Analysis<'a> {
     pub namespace_definitions: HashMap<&'a str, NamespaceDef<'a>>,
     pub var_definitions: HashMap<(&'a str, &'a str) /* ns and name */, VarDefinition<'a>>,
     pub context: Rc<RefCell<AnalysisContext<'a>>>,
+    parent_map: Rc<RefCell<HashMap<&'a AST<'a>, &'a AST<'a>>>>
 }
 
 impl<'a> Analysis<'a> {
@@ -85,6 +87,48 @@ impl<'a> Analysis<'a> {
                 current_ns: "",
                 env: Vec::new(),
             })),
+            parent_map: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+}
+
+impl<'a> Eq for AST<'a> {}
+impl<'a> Hash for AST<'a> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.pos.hash(state);
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ASTAscend<'a> {
+    current: &'a AST<'a>,
+    analysis: &'a Analysis<'a>
+}
+
+impl<'a> Iterator for ASTAscend<'a> {
+    type Item = &'a AST<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(next) = self.analysis.get_parent(self.current) {
+            self.current = next;
+            Option::Some(next)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a> Analysis<'a> {
+    pub fn set_parent(&mut self, child: &'a AST<'a>, parent: &'a AST<'a>) -> Option<&'a AST<'a>> {
+        self.parent_map.borrow_mut().insert(child, parent)
+    }
+    pub fn get_parent(&self, child: &'a AST<'a>) -> Option<&'a AST<'a>> {
+        self.parent_map.borrow().get(child).map(|x| *x)
+    }
+    pub fn ascend(&'a self, child: &'a AST<'a>) -> impl Iterator<Item = &'a AST<'a>> {
+        ASTAscend {
+            current: child,
+            analysis: self
         }
     }
 }
@@ -248,6 +292,7 @@ pub fn _visit_ast_with_analyzing<'a>(
             effect(&ast);
 
             for form in forms {
+                analysis.borrow_mut().set_parent(form, ast);
                 _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
             }
 
@@ -260,18 +305,22 @@ pub fn _visit_ast_with_analyzing<'a>(
         ASTBody::Vector(forms) => {
             effect(&ast);
             for form in forms {
+                analysis.borrow_mut().set_parent(form, ast);
                 _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
             }
         }
         ASTBody::Set(forms) => {
             effect(&ast);
             for form in forms {
+                analysis.borrow_mut().set_parent(form, ast);
                 _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
             }
         }
         ASTBody::Map(forms) => {
             effect(&ast);
             for (k, v) in forms {
+                analysis.borrow_mut().set_parent(k, ast);
+                analysis.borrow_mut().set_parent(v, ast);
                 _visit_ast_with_analyzing(filename, k, effect, analysis.clone());
                 _visit_ast_with_analyzing(filename, v, effect, analysis.clone());
             }
@@ -279,19 +328,23 @@ pub fn _visit_ast_with_analyzing<'a>(
         ASTBody::AnonymousFn(forms) => {
             effect(&ast);
             for form in forms {
+                analysis.borrow_mut().set_parent(form, ast);
                 _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
             }
         }
         ASTBody::Quote(form) => {
             effect(&ast);
+            analysis.borrow_mut().set_parent(form, ast);
             _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
         }
         ASTBody::SyntaxQuote(form) => {
             effect(&ast);
+            analysis.borrow_mut().set_parent(form, ast);
             _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
         }
         ASTBody::UnQuote(form) => {
             effect(&ast);
+            analysis.borrow_mut().set_parent(form, ast);
             _visit_ast_with_analyzing(filename, form, effect, analysis.clone());
         }
         ASTBody::EOF => {
@@ -300,6 +353,7 @@ pub fn _visit_ast_with_analyzing<'a>(
         ASTBody::Root(forms) => {
             effect(&ast);
             for form in forms {
+                analysis.borrow_mut().set_parent(form, ast);
                 _visit_ast_with_analyzing(filename, form, effect, analysis.clone())
             }
         }

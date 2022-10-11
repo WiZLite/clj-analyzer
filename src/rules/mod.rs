@@ -5,6 +5,7 @@ use crate::{
     Location, Span,
 };
 mod readable_condition;
+mod redundant_let;
 use edn_rs;
 
 pub enum Severity {
