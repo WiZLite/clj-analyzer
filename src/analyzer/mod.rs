@@ -68,22 +68,191 @@ fn analyze_var_definitions<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: An
     }
 }
 
-// Returns if there is any bindings
+// Returns if ast is a function list
 // TODO: handle syntax errors.
 #[rustfmt::skip]
-fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) -> bool {
-    let current_ns = analysis.borrow().ctx_get_current_ns();
+fn analyze_fn_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) -> bool {
     let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return false; };
-    let first = if let Some(first) = forms.get(0) { first } else { return false; };
-    let second = if let Some(second) = forms.get(1) { second } else { return false; };
+    let defined_by = if let Some(first) = forms.get(0) { 
+        if let ASTBody::Symbol { ns, name: defined_by } = first.body {
+            if defined_by == "defn" || defined_by == "fn" {
+                defined_by
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    } else { return false; };
+    let has_docstring = if let Some(third) = forms.get(3) {
+        if let ASTBody::StringLiteral(_) = third.body { true } else { false }
+    } else {
+        return false;
+    };
+    let current_ns = analysis.borrow().ctx_get_current_ns();
+    let binding_vec_opt = if has_docstring { forms.get(3) } else { forms.get(2) };
+    if let Some(binding_vec) = binding_vec_opt {
+        if let ASTBody::Vector(forms) = &binding_vec.body {
+            for (i, form) in forms.iter().enumerate() {
+                match &form.body {
+                    ASTBody::Symbol { ns, name } => {
+                        if let Some(ns_name) = ns {
+                            println!("Syntax error. Invalid var name {}/{}", ns.unwrap(), name);
+                            return false;
+                        } else {
+                            let binding = Binding {
+                                filename,
+                                defined_by,
+                                name,
+                                namespace: current_ns,
+                                is_private: true,
+                                bound_to: form,
+                                kind: BindingKind::FnArg(i as u16),
+                            };
+                            analysis.borrow_mut().bindings.insert(binding);
+                            analysis.borrow_mut().ctx_bind_var(name, binding);
+                        }
+                    },
+                    ASTBody::Map(kvs) => {
+                        todo!()
+                    },
+                    _ => {
+                        println!("Expected symbol or map here but found {}", form.fragment());
+                    }
+                }
+            }
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    }
+}
+
+enum DestructTarget<'a> {
+    FnArg(u16),
+    AST(&'a AST<'a>),
+}
+fn analyze_destructing<'a>(
+    filename: &'a str,
+    current_ns: &'a str,
+    defined_by: &'a str,
+    kvs: &'a Vec<(AST<'a>, AST<'a>)>,
+    target: DestructTarget<'a>,
+    analysis: AnalysisCell<'a>,
+) -> Result<(), SyntaxError> {
+    for (k, v) in kvs {
+        match k.body {
+            // ex) [{binded_symbol :key} values]
+            ASTBody::Symbol {
+                ns,
+                name: bind_name,
+            } => {
+                let binding = Binding {
+                    filename,
+                    defined_by,
+                    name: bind_name,
+                    namespace: current_ns,
+                    is_private: true,
+                    bound_to: k,
+                    kind: match target {
+                        DestructTarget::FnArg(n) => BindingKind::FnArg(n),
+                        DestructTarget::AST(target) => BindingKind::Normal { value: target },
+                    },
+                };
+                analysis.borrow_mut().bindings.insert(binding);
+                analysis.borrow_mut().ctx_bind_var(bind_name, binding);
+            }
+            // ex) [{:keys [:a :b :c]} values]
+            ASTBody::Keyword { ns, name: "keys" } => {
+                if let ASTBody::Vector(keys) = &v.body {
+                    for key in keys {
+                        if let ASTBody::Keyword {
+                            ns,
+                            name: bind_name,
+                        } = key.body
+                        {
+                            let binding = Binding {
+                                filename,
+                                defined_by,
+                                name: bind_name,
+                                namespace: current_ns,
+                                is_private: true,
+                                bound_to: key,
+                                kind: match target {
+                                    DestructTarget::FnArg(n) => {
+                                        BindingKind::FnArgDestructing { key, index: n }
+                                    }
+                                    DestructTarget::AST(target_ast) => BindingKind::Destructing {
+                                        key,
+                                        map: target_ast,
+                                    },
+                                },
+                            };
+                            analysis.borrow_mut().bindings.insert(binding);
+                            analysis.borrow_mut().ctx_bind_var(bind_name, binding);
+                        } else {
+                            return Err(SyntaxError::from_ast_and_message(
+                                key,
+                                "Expect keyword here",
+                            ));
+                        }
+                    }
+                } else {
+                    return Err(SyntaxError::from_ast_and_message(v, "Expect vector here"));
+                }
+            }
+            // ex) [{:as context ...}]
+            ASTBody::Keyword { ns, name: "as" } => {
+                if let ASTBody::Symbol {
+                    ns,
+                    name: bind_name,
+                } = v.body
+                {
+                    let binding = Binding {
+                        filename,
+                        defined_by,
+                        name: bind_name,
+                        namespace: current_ns,
+                        is_private: true,
+                        bound_to: v,
+                        kind: match target {
+                            DestructTarget::FnArg(n) => BindingKind::FnArg(n),
+                            DestructTarget::AST(target_ast) => {
+                                BindingKind::Normal { value: target_ast }
+                            }
+                        }, // kind: BindingKind::Normal { value: &binding[1] },
+                    };
+                    analysis.borrow_mut().bindings.insert(binding);
+                    analysis.borrow_mut().ctx_bind_var(bind_name, binding);
+                } else {
+                    return Err(SyntaxError::from_ast_and_message(v, "Expect keyword here"));
+                }
+            }
+            _ => {
+                return Err(SyntaxError::from_ast_and_message(v, "Invalid binding"));
+            }
+        }
+    }
+    Ok(())
+}
+
+// Returns if there is any bindings
+#[rustfmt::skip]
+fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: AnalysisCell<'a>) -> Result<bool, SyntaxError> {
+    let current_ns = analysis.borrow().ctx_get_current_ns();
+    let forms = if let ASTBody::List(forms) = &ast.body { forms } else { return Ok(false) };
+    let first = if let Some(first) = forms.get(0) { first } else { return Ok(false) };
+    let second = if let Some(second) = forms.get(1) { second } else { return Ok(false) };
     if let ASTBody::Symbol { ns, name: defined_by } = &first.body {
         if *defined_by != "let" && *defined_by != "if-let" && *defined_by != "when-let" {
-            return false;
+            return Ok(false);
         }
         if let ASTBody::Vector(forms) = &second.body {
             if forms.len() % 2 != 0 {
                 println!("let bindings must have even number of forms. {}", ast.fragment());
-                return false;
+                return Ok(false);
             }
     
             let new_scope = HashMap::new();
@@ -94,7 +263,7 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                     ASTBody::Symbol { ns, name } => {
                         if let Some(ns_name) = ns {
                             println!("Syntax error. Invalid var name {}/{}", ns.unwrap(), name);
-                            return false;
+                            return Ok(false);
                         } else {
                             let binding = Binding {
                                 filename,
@@ -109,84 +278,15 @@ fn analyze_let_bindings<'a>(filename: &'a str, ast: &'a AST<'a>, analysis: Analy
                             analysis.borrow_mut().ctx_bind_var(name, binding);
                         }
                     },
-                    ASTBody::Map(kvs) => {
-                        for (k, v) in kvs {
-                            match k.body {
-                                // ex) [{binded_symbol :key} values]
-                                ASTBody::Symbol { ns, name: bind_name } => {
-                                    let binding = Binding {
-                                        filename,
-                                        defined_by,
-                                        name: bind_name,
-                                        namespace: current_ns,
-                                        is_private: true,
-                                        bound_to: k,
-                                        kind: BindingKind::Destructing { key: v, map: &binding[1] }
-                                    };
-                                    analysis.borrow_mut().bindings.insert(binding);
-                                    analysis.borrow_mut().ctx_bind_var(bind_name, binding);
-                                },
-                                // ex) [{:keys [:a :b :c]} values]
-                                ASTBody::Keyword { ns, name: "keys" } => {
-                                    if let ASTBody::Vector(keys) = &v.body {
-                                        for key in keys {
-                                            if let ASTBody::Keyword { ns, name: bind_name } = key.body {
-                                                let binding = Binding {
-                                                    filename,
-                                                    defined_by,
-                                                    name: bind_name,
-                                                    namespace: current_ns,
-                                                    is_private: true,
-                                                    bound_to: key,
-                                                    kind: BindingKind::Destructing { key, map: &binding[1] }
-                                                };
-                                                analysis.borrow_mut().bindings.insert(binding);
-                                                analysis.borrow_mut().ctx_bind_var(bind_name, binding);
-                                            } else {
-                                                println!("{} Syntax error. Expect keyword but found {}",key.pos, key.fragment());
-                                                return false;
-                                            }
-                                        }
-                                    } else {
-                                        println!("{} Syntax error. Expect vector but found {}", v.pos, v.fragment());
-                                        return false;
-                                    }
-                                },
-                                // ex) [{:as context ...}]
-                                ASTBody::Keyword { ns, name: "as" } => {
-                                    if let ASTBody::Symbol { ns, name: bind_name } = v.body {
-                                        let binding = Binding {
-                                            filename,
-                                            defined_by,
-                                            name: bind_name,
-                                            namespace: current_ns,
-                                            is_private: true,
-                                            bound_to: v,
-                                            kind: BindingKind::Normal { value: &binding[1] }
-                                        };
-                                        analysis.borrow_mut().bindings.insert(binding);
-                                        analysis.borrow_mut().ctx_bind_var(bind_name, binding);
-                                    } else {
-                                        println!("{} Syntax error. Expect keyword but found {}", v.pos, v.fragment());
-                                        return false;
-                                    }
-                                }
-                                _ => {
-                                    println!("{} Syntax error! Invalid binding {}", v.pos, k.fragment());
-                                    return false;
-                                }
-                            }
-                        }
-                    }
+                    ASTBody::Map(kvs) => analyze_destructing(filename, current_ns, defined_by,  kvs, DestructTarget::AST(&binding[1]), analysis.clone())?,
                     _ => {
-                        println!("Syntax error! Expect symbol or map but found {}", ast.fragment());
-                        return false;
+                        return Err(SyntaxError::from_ast_and_message(ast, "Expect symbol or map"))
                     }
                 }
             }
         }
     }
-    true
+    Ok(false)
 }
 
 pub fn _visit_ast_with_analyzing<'a>(
@@ -200,7 +300,14 @@ pub fn _visit_ast_with_analyzing<'a>(
         ASTBody::List(forms) => {
             analyze_ns_definitions(filename, ast, analysis_cell.clone());
             analyze_var_definitions(filename, ast, analysis_cell.clone());
-            let is_scope = analyze_let_bindings(filename, ast, analysis_cell.clone());
+            // TODO: handle syntax error
+            let is_scope = match analyze_let_bindings(filename, ast, analysis_cell.clone()) {
+                Ok(b) => b,
+                Err(err) => {
+                    println!("Syntax error: {:?}", err);
+                    false
+                }
+            };
 
             on_visit(ast, &analysis_cell.clone().borrow());
 
@@ -266,10 +373,10 @@ pub fn _visit_ast_with_analyzing<'a>(
         }
         ASTBody::UnQuote(form) => {
             on_visit(ast, analysis_cell.borrow().deref());
-            if analysis_cell.borrow_mut().ctx_unquote().is_err() {
-                // TODO: propagate syntax error
-                println!("Syntax error! Too many unquotes");
-                return;
+            if analysis_cell.borrow_mut().ctx_unquote().is_none() {
+                // TODO: Handle syntax error
+                let err = SyntaxError::from_ast_and_message(ast, "Too many unquotes");
+                dbg!(err);
             }
             _visit_ast_with_analyzing(
                 filename,
@@ -647,22 +754,20 @@ mod tests {
             on_visit: |ast, analysis| {
                 dbg!(&ast);
                 match &ast.body {
-                    ASTBody::Symbol { ns, name } => {
-                        match *name {
-                            "a" => {
-                                *a_visited.borrow_mut() = true;
-                                assert!(analysis.ctx_get_quoted());
-                            },
-                            "b" => {
-                                *b_visited.borrow_mut() = true;
-                                assert!(!analysis.ctx_get_quoted())
-                            },
-                            "c" => {
-                                *c_visited.borrow_mut() = true;
-                                assert!(analysis.ctx_get_quoted())
-                            },
-                            _ => {}
+                    ASTBody::Symbol { ns, name } => match *name {
+                        "a" => {
+                            *a_visited.borrow_mut() = true;
+                            assert!(analysis.ctx_get_quoted());
                         }
+                        "b" => {
+                            *b_visited.borrow_mut() = true;
+                            assert!(!analysis.ctx_get_quoted())
+                        }
+                        "c" => {
+                            *c_visited.borrow_mut() = true;
+                            assert!(analysis.ctx_get_quoted())
+                        }
+                        _ => {}
                     },
                     _ => {}
                 }

@@ -17,6 +17,11 @@ pub struct NamespaceDef<'a> {
     pub filename: &'a str,
 }
 
+pub enum BoundTo<'a> {
+    AST(&'a AST<'a>),
+    FnArg(u8)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Binding<'a> {
     pub namespace: &'a str,
@@ -32,6 +37,8 @@ pub struct Binding<'a> {
 pub enum BindingKind<'a> {
     Normal { value: &'a AST<'a> },
     Destructing { key: &'a AST<'a>, map: &'a AST<'a> },
+    FnArg(u16),
+    FnArgDestructing { key: &'a AST<'a>, index: u16 }
 }
 
 impl<'a> std::hash::Hash for Binding<'a> {
@@ -104,13 +111,13 @@ impl<'a> Analysis<'a> {
         self.context.clone().deref().borrow_mut().quoted_count += 1;
         self.context.deref().borrow().quoted_count
     }
-    // Fails if quoted_count is 0
-    pub(super) fn ctx_unquote(&mut self) -> Result<u16, SyntaxError> {
+    // returns None if quoted_count is 0
+    pub(super) fn ctx_unquote(&mut self) -> Option<u16> {
         if self.context.deref().borrow().quoted_count == 0 {
-            return Err(SyntaxError { message: "Too many unquotes".to_string() } )
+            return None
         }
         self.context.clone().deref().borrow_mut().quoted_count -= 1;
-        Ok(self.context.deref().borrow().quoted_count)
+        Some(self.context.deref().borrow().quoted_count)
     }
     pub(super) fn ctx_get_quoted(&self) -> bool {
         self.context.deref().borrow().quoted_count > 0
